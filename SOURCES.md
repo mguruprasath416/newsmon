@@ -1,6 +1,8 @@
-# ClarityTI — Monitored Threat Intelligence Sources
+# NewsMon (ClarityTI) — Monitored Threat Intelligence Sources
 
-This document provides a comprehensive list of all **active intelligence sources** monitored, indexed, and crawled by the ClarityTI platform.
+This document provides a comprehensive list of all **active intelligence sources** monitored, indexed, and crawled by the NewsMon / ClarityTI platform.
+
+- **GitHub Repository**: [https://github.com/mguruprasath416/newsmon.git](https://github.com/mguruprasath416/newsmon.git)
 
 ---
 

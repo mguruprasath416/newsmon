@@ -329,11 +329,41 @@ System-wide ingestion, audit, and worker execution logs.
 | `status` | `string` | Yes | Outcome (`success`, `warning`, `error`) | Index |
 | `message` | `string` | Yes | Log details message | - |
 | `details` | `object` | No | Additional context JSON | - |
-| `timestamp` | `datetime` | Yes | Log timestamp | Index |
+---
+
+## 16. `viral_events` Collection (CyberPulse Heat Map)
+
+Stores real-time clustered outbreak events, heat scores, and multi-source growth velocity.
+
+| Field | Type | Required | Default | Description | Index |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `_id` | `ObjectId` | Yes | Auto | Primary key | Primary |
+| `event_id` | `string` | Yes | - | Unique event identifier | **Unique Index** |
+| `title` | `string` | Yes | - | Canonical event title | - |
+| `normalized_title` | `string` | Yes | - | Normalized lowercase title | Index |
+| `summary` | `string` | Yes | - | Executive event summary | - |
+| `explanation` | `string` | Yes | - | Technical breach explanation | - |
+| `related_article_ids` | `array[string]` | Yes | `[]` | Foreign keys to `articles._id` | - |
+| `unique_source_names` | `array[string]` | Yes | `[]` | Distinct sources reporting the story | - |
+| `source_count` | `integer` | Yes | `0` | Total distinct reporting sources | Index |
+| `article_count` | `integer` | Yes | `0` | Total reporting articles | - |
+| `heat_score` | `integer` | Yes | `0` | Calculated viral heat metric (0-100) | Index |
+| `coverage_score` | `float` | Yes | `0.0` | Source diversity score | - |
+| `velocity_score` | `float` | Yes | `0.0` | Publication velocity score | - |
+| `recency_score` | `float` | Yes | `0.0` | Temporal recency decay score | - |
+| `trend` | `string` | Yes | `"increasing"` | `increasing`, `stable`, `decreasing` | - |
+| `priority` | `string` | Yes | `"medium"` | `critical`, `high`, `medium` | Index |
+| `status` | `string` | Yes | `"trending"` | `emerging`, `trending`, `high_heat` | Index |
+| `target_company` | `string` | No | `null` | Targeted organization name | Index |
+| `target_country` | `string` | No | `null` | Victim country / region | Index |
+| `incident_type` | `string` | No | `null` | Incident category (`Ransomware`, `Breach`, `Zero-Day`) | Index |
+| `first_detected_at` | `datetime` | Yes | UTC Now | Outbreak start timestamp | Index |
+| `last_detected_at` | `datetime` | Yes | UTC Now | Latest update timestamp | Index |
+| `alert_triggered` | `boolean` | Yes | `false` | True if dispatched to MS Teams | Index |
 
 ---
 
-## 16. Performance Compound Indexes & Optimizations
+## 17. Performance Compound Indexes & Optimizations
 
 To ensure sub-second query speeds across **100,000+ historical articles and threat actors**, the following compound indexes are configured:
 

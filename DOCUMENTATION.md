@@ -545,6 +545,8 @@ All endpoints are hosted under the `/api/v1` base route.
 | `POST` | `/api/v1/auth/login` | Authenticate user & receive JWT token | Authentication |
 | `GET` | `/api/v1/feed` | Query intelligence feed with pagination & filters | Intelligence Feed |
 | `GET` | `/api/v1/feed/{id}` | Retrieve single article details by ObjectId | Intelligence Feed |
+| `GET` | `/api/v1/cyberpulse` | Query real-time cyber breach heat map data | CyberPulse Heat Map |
+| `GET` | `/api/v1/viral-events` | Fetch viral and high-impact security outbreak events | CyberPulse Viral Events |
 | `POST` | `/api/v1/lens/analyze` | Submit URL, text, or file for Advisory Lens analysis | Advisory Lens |
 | `GET` | `/api/v1/lens/jobs/{job_id}` | Check status and result of Advisory Lens job | Advisory Lens |
 | `GET` | `/api/v1/reports` | List saved intelligence reports | Reports |
@@ -557,16 +559,15 @@ All endpoints are hosted under the `/api/v1` base route.
 | `GET` | `/api/v1/threat-actors/{id}` | Get complete threat actor profile with graph data | Threat Actors |
 | `GET` | `/api/v1/malware` | List malware families | Malware |
 | `GET` | `/api/v1/campaigns` | List attack campaigns and timelines | Campaigns |
-| `GET` | `/api/v1/clusters` | Query news clusters and discovery rules | News Clusters |
-| `POST` | `/api/v1/clusters` | Create custom cluster discovery rule | News Clusters |
+| `GET` | `/api/v1/clusters` | Query news clusters and discovery rules | Country & Sector Clusters |
+| `POST` | `/api/v1/clusters` | Create custom cluster discovery rule | Country & Sector Clusters |
 | `GET` | `/api/v1/teams/config` | Get Microsoft Teams webhook configuration | MS Teams Integration |
 | `POST` | `/api/v1/teams/webhook` | Save & test Microsoft Teams channel webhooks (`indian_based`, `gcc_middle_east`) | MS Teams Integration |
 | `POST` | `/api/v1/teams/send-todays-news` | Dispatch today's news feed to Teams regional channels | MS Teams Integration |
-| `POST` | `/api/v1/discord/webhook` | Save & test Discord webhook configuration | Discord Integration |
-| `POST` | `/api/v1/discord/send-todays-news` | Dispatch today's news embeds to Discord server | Discord Integration |
-| `GET` | `/api/v1/sources` | List all 39+ intelligence sources & official CERT health status | Sources |
+| `GET` | `/api/v1/sources` | List all 72+ intelligence sources & official CERT health status | Sources |
 | `POST` | `/api/v1/sources/add-url` | Add website URL for scraping & 2-Part AI summary generation | Sources |
 | `GET` | `/api/v1/analytics/overview` | Platform metrics & MITRE ATT&CK breakdown | Analytics |
+| `GET` | `/api/v1/ws` | Real-time WebSocket connection for live threat alerts | WebSocket |
 
 ---
 
@@ -600,4 +601,27 @@ docker compose up -d --build
 - **Celery Flower Task Dashboard**: [http://localhost:5555](http://localhost:5555)
 
 ---
-*TLP: WHITE · ClarityTI Enterprise Cyber Threat Intelligence Platform v1.0.0*
+
+## 7. CTI Keyword Taxonomy & Operational Utility Scripts
+
+### Keyword Taxonomy Structure (`files/Keywords/`)
+The classification engine reads standardized keyword dictionaries across 6 core threat domains:
+- **`Attacks/`**: `Cyber Espionage.txt`, `DDoS.txt`, `Phishing.txt`, `Ransomware.txt`, `Supply Chain.txt`
+- **`Geography/`**: `India.txt`, `USA.txt`, `China.txt`, `Europe.txt`, `Middle East.txt`, `Russia.txt`
+- **`Malware/`**: `Botnet.txt`, `Infostealer.txt`, `RAT.txt`, `Spyware.txt`, `Trojan.txt`
+- **`Targets/`**: `Banking.txt`, `Critical Infrastructure.txt`, `Energy.txt`, `Government.txt`, `Healthcare.txt`, `Telecom.txt`
+- **`Threat Actors/`**: `APT.txt`, `Cybercriminals.txt`, `Hacktivists.txt`, `Ransomware Groups.txt`
+- **`Vulnerabilities/`**: `CVE.txt`, `Privilege Escalation.txt`, `RCE.txt`, `Zero-Day.txt`
+
+### Operational Scripts (`backend/scripts/`)
+| Script | Command | Purpose |
+| :--- | :--- | :--- |
+| `crawl_and_dispatch_teams.py` | `python backend/scripts/crawl_and_dispatch_teams.py` | Crawls active feeds and dispatches breach cards to Microsoft Teams |
+| `link_threat_actors.py` | `python backend/scripts/link_threat_actors.py` | Correlates and links articles with canonical Threat Actor entities |
+| `run_smart_deduplication.py` | `python backend/scripts/run_smart_deduplication.py` | Identifies and clusters near-duplicate threat stories via embedding similarity |
+| `backfill_2018_present.py` | `python backend/scripts/backfill_2018_present.py` | Archives historical CTI data from 2018 to the present |
+| `check_and_add_india_sources.py` | `python backend/scripts/check_and_add_india_sources.py` | Verifies and registers regional Indian cyber intelligence feeds |
+
+---
+*TLP: WHITE · ClarityTI / NewsMon Enterprise Cyber Threat Intelligence Platform v1.0.0*
+

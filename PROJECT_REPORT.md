@@ -291,9 +291,11 @@ The platform was deployed and validated against production intelligence sources.
 ---
 
 ## 19. Conclusion
-The **ClarityTI** Enterprise Cyber Threat Intelligence Platform successfully transforms fragmented, unstructured cyber security data into a centralized, automated intelligence hub engineered specifically for **Foresiet security teams**. By deploying asynchronous FastAPI microservices, Celery distributed task queues, MongoDB document storage, Elasticsearch full-text search, and Next.js analytics dashboards, the project addresses the core challenge of missed company breaches and decentralized threat news.
+The **ClarityTI** (NewsMon) Enterprise Cyber Threat Intelligence Platform successfully transforms fragmented, unstructured cyber security data into a centralized, automated intelligence hub engineered specifically for security teams. By deploying asynchronous FastAPI microservices, Celery distributed task queues, MongoDB document storage, Elasticsearch full-text search, and Next.js analytics dashboards, the project addresses the core challenge of missed company breaches and decentralized threat news.
 
-With **33 global intelligence feeds**, **5,550+ cataloged reports**, **946 Threat Actor profiles**, and **1,662 CISA KEV vulnerability records** fully operationalized and categorized, ClarityTI ensures zero missed corporate data breaches, eliminates manual monitoring overhead, and equips Foresiet analysts with real-time, proactive threat visibility.
+With **72+ global intelligence feeds**, **5,550+ cataloged reports**, **946 Threat Actor profiles**, **CyberPulse real-time heat maps**, and **1,662 CISA KEV vulnerability records** fully operationalized and categorized, the platform ensures zero missed corporate data breaches, eliminates manual monitoring overhead, and equips analysts with real-time, proactive threat visibility.
+
+- **GitHub Repository**: [https://github.com/mguruprasath416/newsmon.git](https://github.com/mguruprasath416/newsmon.git)
 
 ---
 
