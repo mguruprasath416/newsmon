@@ -1,0 +1,15 @@
+CVE-
+Common Vulnerabilities and Exposures
+CVSS score
+CVSS 10.0
+CVSS 9.8
+critical vulnerability
+security advisory
+vulnerability disclosure
+security flaw
+buffer overflow
+memory corruption
+SQL injection
+cross-site scripting
+authentication bypass
+improper access control

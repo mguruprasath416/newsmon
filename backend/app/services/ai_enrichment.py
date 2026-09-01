@@ -1,0 +1,314 @@
+"""
+AI Threat Intelligence Classifier & Enrichment Service for ClarityTI
+
+PRIMARY:  NVIDIA NIM API — meta/llama-3.3-70b-instruct via OpenAI-compatible chat completions
+          (uses NVIDIA_API_KEY / integrate.api.nvidia.com/v1)
+FALLBACK: High-precision heuristic rule extractor (no external API required)
+
+Extracts 10 structured CTI fields from threat intelligence articles:
+  claim_status, severity, threat_actor, target_country, sector,
+  claimed_records_count, attack_vector, company_response, cves, summary
+"""
+import re
+import json
+import httpx
+from typing import Dict, Any, Optional
+import structlog
+
+from app.config import settings
+from app.services.teams_service import (
+    determine_breach_status,
+    extract_claimed_records,
+    extract_claimed_vector,
+    extract_company_response,
+    extract_country,
+)
+
+log = structlog.get_logger()
+
+# ── System Prompt ─────────────────────────────────────────────────────────────
+SYSTEM_PROMPT = """You are a cyber threat intelligence classifier for ClarityTI, a CTI monitoring platform. You will be given the title and body text of a single news article, vendor blog post, or advisory. Extract structured fields from it and return ONLY valid JSON — no preamble, no markdown fences, no explanation.
+
+Fields to extract:
+
+- "claim_status": one of "claimed", "confirmed", "denied"
+  - "claimed": an actor, listing, or unverified source alleges an incident, with no independent confirmation from the affected organization
+  - "confirmed": the affected company, a named security vendor, or a government body has verified the incident occurred
+  - "denied": the affected company investigated and stated no breach/incident occurred, or that the claim is inaccurate/exaggerated
+
+- "severity": one of "critical", "high", "medium", "low", "informational"
+  - "critical": active exploitation of a widely-used product, confirmed large-scale breach, or ransomware affecting critical infrastructure
+  - "high": confirmed breach with sensitive data exposure, high-severity CVE with public PoC, active APT campaign
+  - "medium": claimed breach, moderate CVE, isolated incident
+  - "low": minor advisory, patched vulnerability, low real-world risk
+  - "informational": policy news, research findings, non-incident content
+
+- "threat_actor": string. The named actor/group if identified (e.g. "TheHatman", "LockBit"). If no actor is named, return "Unattributed" — never empty or null.
+
+- "target_country": string or null. Country of the targeted organization. Use full country name (e.g. "India", not "IN"). Return null if not determinable.
+
+- "sector": string or null. One of: "IT", "Banking & Finance", "Healthcare", "Manufacturing", "Energy", or null.
+
+- "claimed_records_count": integer or null. Specific number of records/accounts claimed affected. Null if not stated.
+
+- "attack_vector": string or null. The claimed/confirmed method of compromise (e.g. "compromised Azure credentials", "unpatched VPN appliance"). Null if not stated.
+
+- "company_response": string or null. Short quote or paraphrase of what the affected organization said (e.g. "no systems breached", "investigating"). Null if no company statement.
+
+- "cves": array of strings. Any CVE IDs mentioned, format "CVE-YYYY-NNNNN". Empty array if none.
+
+- "summary": string. A neutral, factual 2-3 sentence summary in your own words. State what is claimed vs. confirmed explicitly.
+
+Rules:
+- Never fabricate a value. Use null (or "Unattributed" for threat_actor, [] for arrays) if not determinable from the text.
+- Do not let company PR framing override claim_status. If a company says "no breach" but the article is about an unverified claim, use "claimed" not "denied".
+- Output ONLY a single valid JSON object. No markdown, no explanation."""
+
+
+class AIEnrichmentService:
+    """
+    CTI Classifier using NVIDIA NIM (primary) with heuristic fallback.
+
+    Priority order:
+      1. NVIDIA NIM  — meta/llama-3.3-70b-instruct (NVIDIA_API_KEY)
+      2. Heuristic   — rule-based extractor (always available)
+    """
+
+    @classmethod
+    async def enrich_article(cls, title: str, body_text: str) -> Dict[str, Any]:
+        """
+        Classify a threat article into 10 structured CTI fields.
+        Returns a dict guaranteed to match the schema — never raises.
+        """
+        # ── Primary: NVIDIA NIM ──────────────────────────────────────────
+        if settings.NVIDIA_API_KEY:
+            try:
+                result = await cls._enrich_with_nvidia(title, body_text)
+                if result:
+                    log.info(
+                        "CTI classification via NVIDIA NIM",
+                        model=settings.NVIDIA_CHAT_MODEL,
+                        claim_status=result.get("claim_status"),
+                        severity=result.get("severity"),
+                        threat_actor=result.get("threat_actor"),
+                    )
+                    return result
+            except Exception as e:
+                log.warning(
+                    "NVIDIA NIM classification failed, using heuristic fallback",
+                    error=str(e),
+                    model=settings.NVIDIA_CHAT_MODEL,
+                )
+
+        # ── Fallback: Heuristic ──────────────────────────────────────────
+        log.info("CTI classification via heuristic fallback")
+        return cls._heuristic_enrichment(title, body_text)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # NVIDIA NIM Path
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @classmethod
+    async def _enrich_with_nvidia(cls, title: str, body_text: str) -> Optional[Dict[str, Any]]:
+        """
+        Call NVIDIA NIM chat completions API (OpenAI-compatible).
+        Endpoint: https://integrate.api.nvidia.com/v1/chat/completions
+        Model:    meta/llama-3.3-70b-instruct  (best available NIM chat model)
+        Auth:     Bearer NVIDIA_API_KEY
+        """
+        user_content = f"Title: {title}\n\nBody:\n{body_text[:4000]}"
+
+        payload = {
+            "model": settings.NVIDIA_CHAT_MODEL,
+            "temperature": 0.1,
+            "top_p": 0.7,
+            "max_tokens": 1024,
+            "stream": False,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
+        }
+
+        headers = {
+            "Authorization": f"Bearer {settings.NVIDIA_API_KEY}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                f"{settings.NVIDIA_BASE_URL}/chat/completions",
+                json=payload,
+                headers=headers,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        raw_content = data["choices"][0]["message"]["content"].strip()
+
+        # Strip any accidental markdown fences the model might add
+        raw_content = re.sub(r"^```(?:json)?\s*", "", raw_content, flags=re.MULTILINE)
+        raw_content = re.sub(r"\s*```$", "", raw_content, flags=re.MULTILINE)
+        raw_content = raw_content.strip()
+
+        parsed = json.loads(raw_content)
+        cls._validate_and_sanitize(parsed)
+        return parsed
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Heuristic Fallback
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @classmethod
+    def _heuristic_enrichment(cls, title: str, body_text: str) -> Dict[str, Any]:
+        """High-precision heuristic extractor — no external API required."""
+        title = title or ""
+        body_text = body_text or ""
+        full_text = f"{title}\n{body_text}"
+        art = {"title": title, "summary": body_text[:500], "content_clean": body_text}
+
+        # claim_status
+        status_tag = determine_breach_status(art)
+        claim_status = {
+            "CLAIMED": "claimed",
+            "CONFIRMED": "confirmed",
+            "DENIED": "denied",
+        }.get(status_tag, "claimed")
+
+        # threat_actor
+        actor = "Unattributed"
+        actors_match = re.findall(
+            r"\b(TheHatman|LockBit|Akira|Rhysida|BlackCat|RansomHub|"
+            r"LummaStealer|RedLine|Volt Typhoon|Lazarus|APT41|DarkGate|"
+            r"Fancy Bear|Cozy Bear|Charming Kitten|TA577)\b",
+            full_text, re.IGNORECASE,
+        )
+        if actors_match:
+            actor = actors_match[0]
+
+        # target_country
+        country_raw = extract_country(art)
+        target_country = None
+        if country_raw and country_raw != "Unknown":
+            clean_c = re.sub(r"[\U0001F1E6-\U0001F1FF\U0001F300-\U0001F9FF]", "", str(country_raw)).strip()
+            target_country = clean_c or None
+
+        # sector
+        sector = None
+        sector_map = [
+            ("IT", r"\b(tcs|hcl|wipro|infosys|azure|cloud|software|tech|saas|devops)\b"),
+            ("Banking & Finance", r"\b(bank|sbi|icici|hdfc|finance|fintech|payment|razorpay|paytm|wallet)\b"),
+            ("Healthcare", r"\b(hospital|patient|health|medical|pharma|clinic|amgen|aiims)\b"),
+            ("Manufacturing", r"\b(manufacturing|factory|industrial|plant|automobile)\b"),
+            ("Energy", r"\b(energy|power|grid|water|utility|oil|gas|nuclear)\b"),
+        ]
+        for sec, pattern in sector_map:
+            if re.search(pattern, full_text, re.IGNORECASE):
+                sector = sec
+                break
+
+        # claimed_records_count
+        records_str = extract_claimed_records(art)
+        claimed_records_count = None
+        if records_str != "Not disclosed":
+            nums = re.findall(r"\d[\d,]*", records_str)
+            if nums:
+                try:
+                    claimed_records_count = int(nums[0].replace(",", ""))
+                except ValueError:
+                    pass
+
+        # attack_vector
+        vec_str = extract_claimed_vector(art)
+        attack_vector = vec_str if vec_str != "Not disclosed" else None
+
+        # company_response
+        resp_str = extract_company_response(art)
+        company_response = resp_str if resp_str not in ("No statement yet", None) else None
+
+        # CVEs
+        cves = list(set(re.findall(r"\bCVE-\d{4}-\d{4,7}\b", full_text, re.IGNORECASE)))
+        cves = [c.upper() for c in cves]
+
+        # severity
+        severity = "medium"
+        if re.search(r"\b(zero.?day|rce|critical|nation.?state|apt|ransomware.+infrastructure)\b", full_text, re.IGNORECASE):
+            severity = "critical"
+        elif re.search(r"\b(ransomware|confirmed breach|apt|exploit)\b", full_text, re.IGNORECASE):
+            severity = "high"
+        elif re.search(r"\b(advisory|patch|update|fix)\b", full_text, re.IGNORECASE):
+            severity = "low"
+
+        # summary
+        snippet = body_text[:280].strip()
+        summary = (
+            f"An incident report involving '{title[:80]}' has emerged. "
+            f"{snippet}{'...' if len(body_text) > 280 else ''} "
+            f"The current status of this incident is {claim_status}."
+        )
+
+        result = {
+            "claim_status": claim_status,
+            "severity": severity,
+            "threat_actor": actor,
+            "target_country": target_country,
+            "sector": sector,
+            "claimed_records_count": claimed_records_count,
+            "attack_vector": attack_vector,
+            "company_response": company_response,
+            "cves": cves,
+            "summary": summary,
+        }
+        cls._validate_and_sanitize(result)
+        return result
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Schema Validation
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @classmethod
+    def _validate_and_sanitize(cls, data: Dict[str, Any]):
+        """Ensure every field strictly conforms to the schema contract."""
+        # claim_status
+        if data.get("claim_status") not in ("claimed", "confirmed", "denied"):
+            data["claim_status"] = "claimed"
+
+        # severity
+        if data.get("severity") not in ("critical", "high", "medium", "low", "informational"):
+            data["severity"] = "medium"
+
+        # threat_actor — never null/empty
+        if not data.get("threat_actor") or str(data.get("threat_actor")).lower() in ("null", "none", "unknown", ""):
+            data["threat_actor"] = "Unattributed"
+
+        # target_country — null is OK, but not empty string
+        if data.get("target_country") == "":
+            data["target_country"] = None
+
+        # sector — must be one of the allowed values or null
+        allowed_sectors = {"IT", "Banking & Finance", "Healthcare", "Manufacturing", "Energy"}
+        if data.get("sector") not in allowed_sectors:
+            data["sector"] = None
+
+        # cves — must be a list
+        if not isinstance(data.get("cves"), list):
+            data["cves"] = []
+        else:
+            # Normalize format
+            data["cves"] = [
+                c.upper() for c in data["cves"]
+                if re.match(r"CVE-\d{4}-\d{4,7}", str(c), re.IGNORECASE)
+            ]
+
+        # claimed_records_count — must be int or null
+        rcount = data.get("claimed_records_count")
+        if rcount is not None:
+            try:
+                data["claimed_records_count"] = int(rcount)
+            except (TypeError, ValueError):
+                data["claimed_records_count"] = None
+
+        # summary — must be a non-empty string
+        if not data.get("summary") or not str(data.get("summary")).strip():
+            data["summary"] = "No summary available."

@@ -1,0 +1,16 @@
+supply chain attack
+software supply chain attack
+software supply chain compromise
+supply-chain attack
+supply-chain compromise
+third-party breach
+third party compromise
+vendor breach
+dependency confusion
+malicious npm package
+malicious pypi package
+typosquatting attack
+compromised dependency
+upstream dependency
+codebase poisoning
+software update hijacking

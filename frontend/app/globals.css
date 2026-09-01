@@ -1,0 +1,221 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── ClarityTI & CyberPulse Modern Dark Theme ────────────────────────────── */
+:root {
+  --radius: 0.625rem;
+  --background: 222 47% 5%;
+  --foreground: 210 40% 95%;
+}
+
+/* ── Base Reset ─────────────────────────────────────────────────────────────── */
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+  background-color: #080b12;
+  color: #f1f5f9;
+  font-family: 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Scrollbar ──────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: #080b12;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e2840;
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2d3a52;
+}
+
+/* ── Selection ──────────────────────────────────────────────────────────────── */
+::selection {
+  background: rgba(79, 126, 255, 0.3);
+  color: #f1f5f9;
+}
+
+/* ── Component Utilities ────────────────────────────────────────────────────── */
+@layer components {
+  /* Surface Cards */
+  .card {
+    @apply bg-bg-surface border border-border rounded-xl shadow-card;
+  }
+  
+  .card-elevated {
+    @apply bg-bg-elevated border border-border rounded-xl shadow-card;
+  }
+
+  .card-hover {
+    @apply card transition-all duration-300 hover:border-primary/30 hover:shadow-glow-primary hover:-translate-y-0.5;
+  }
+
+  /* Glass effect */
+  .glass {
+    background: rgba(14, 18, 25, 0.8);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(30, 40, 64, 0.8);
+  }
+
+  /* Severity Badges */
+  .badge-critical { @apply bg-severity-critical/20 text-severity-critical border border-severity-critical/30; }
+  .badge-high     { @apply bg-severity-high/20 text-severity-high border border-severity-high/30; }
+  .badge-medium   { @apply bg-severity-medium/20 text-severity-medium border border-severity-medium/30; }
+  .badge-low      { @apply bg-severity-low/20 text-severity-low border border-severity-low/30; }
+  .badge-info     { @apply bg-severity-info/20 text-severity-info border border-severity-info/30; }
+
+  /* Monospace IOC display */
+  .ioc-value {
+    @apply font-mono text-xs bg-bg-overlay px-2 py-0.5 rounded text-accent-cyan border border-border;
+  }
+
+  /* Glow buttons */
+  .btn-primary {
+    @apply bg-primary hover:bg-primary-hover text-white font-medium px-4 py-2 rounded-lg
+           transition-all duration-200 hover:shadow-glow-primary active:scale-95;
+  }
+
+  .btn-secondary {
+    @apply bg-bg-elevated hover:bg-bg-overlay border border-border text-text-secondary hover:text-text-primary
+           font-medium px-4 py-2 rounded-lg transition-all duration-200;
+  }
+
+  .btn-ghost {
+    @apply hover:bg-primary/10 text-text-secondary hover:text-primary px-3 py-2 rounded-lg
+           transition-all duration-200;
+  }
+
+  /* Sidebar nav item */
+  .nav-item {
+    @apply flex items-center gap-3 px-3 py-2.5 rounded-lg text-text-secondary text-sm font-medium
+           hover:bg-primary/10 hover:text-primary transition-all duration-200 cursor-pointer;
+  }
+
+  .nav-item-active {
+    @apply nav-item bg-primary/15 text-primary border border-primary/20;
+  }
+
+  /* Input fields */
+  .input-field {
+    @apply bg-bg-elevated border border-border rounded-lg px-3 py-2 text-text-primary text-sm
+           placeholder:text-text-muted focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/30
+           transition-all duration-200;
+  }
+
+  /* Tag/chip */
+  .tag {
+    @apply bg-bg-overlay text-text-secondary text-xs px-2 py-0.5 rounded-full border border-border;
+  }
+
+  /* Skeleton loader */
+  .skeleton {
+    @apply bg-bg-overlay animate-pulse rounded;
+    background: linear-gradient(90deg, #141822 25%, #1c2130 50%, #141822 75%);
+    background-size: 200% 100%;
+    animation: shimmer 2s linear infinite;
+  }
+
+  /* Section header */
+  .section-title {
+    @apply text-sm font-semibold text-text-muted uppercase tracking-widest;
+  }
+
+  /* Stat card */
+  .stat-card {
+    @apply card p-4 flex flex-col gap-1;
+  }
+
+  .stat-value {
+    @apply text-2xl font-bold text-text-primary font-display;
+  }
+
+  .stat-label {
+    @apply text-xs text-text-muted;
+  }
+
+  /* Timeline item */
+  .timeline-item {
+    @apply relative pl-6 pb-4 border-l border-border last:border-transparent;
+  }
+
+  .timeline-dot {
+    @apply absolute left-[-4px] top-1 w-2 h-2 rounded-full bg-primary;
+  }
+
+  /* Code block */
+  .code-block {
+    @apply bg-bg-base border border-border rounded-lg p-4 font-mono text-xs text-accent-cyan overflow-x-auto;
+  }
+}
+
+/* ── Animations ─────────────────────────────────────────────────────────────── */
+@layer utilities {
+  .animate-fade-in {
+    animation: fade-in 0.4s ease-out forwards;
+  }
+
+  .text-gradient-primary {
+    background: linear-gradient(135deg, #4f7eff 0%, #7c5cfc 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .text-gradient-accent {
+    background: linear-gradient(135deg, #00d4ff 0%, #4f7eff 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .border-gradient {
+    border: 1px solid transparent;
+    background: linear-gradient(#0e1219, #0e1219) padding-box,
+                linear-gradient(135deg, rgba(79,126,255,0.4), rgba(124,92,252,0.4)) border-box;
+  }
+
+  .glow-dot-critical { box-shadow: 0 0 8px #dc2626; }
+  .glow-dot-high     { box-shadow: 0 0 8px #ea580c; }
+  .glow-dot-medium   { box-shadow: 0 0 8px #ca8a04; }
+}
+
+/* ── React Flow overrides ────────────────────────────────────────────────────── */
+.react-flow__background {
+  background-color: #080b12;
+}
+.react-flow__node {
+  border-radius: 8px;
+}
+
+/* ── ECharts overrides ──────────────────────────────────────────────────────── */
+.echarts-for-react canvas {
+  border-radius: 8px;
+}
+
+/* ── Page transitions ───────────────────────────────────────────────────────── */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}

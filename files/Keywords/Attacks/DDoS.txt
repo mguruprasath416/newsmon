@@ -1,0 +1,26 @@
+DDoS
+DDoS attack
+distributed denial of service
+distributed denial-of-service
+denial of service attack
+DoS attack
+Layer 7 DDoS
+L7 DDoS
+volumetric attack
+HTTP flood
+HTTPS flood
+UDP flood
+TCP SYN flood
+SYN flood
+ACK flood
+DNS amplification
+NTP amplification
+UDP amplification
+ICMP flood
+DNS flood attack
+slowloris
+botnet DDoS
+DDoS campaign
+DDoS-for-hire
+booter service
+stresser service

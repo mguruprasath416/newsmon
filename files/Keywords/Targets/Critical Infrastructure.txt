@@ -1,0 +1,11 @@
+critical infrastructure
+SCADA system
+industrial control system
+ICS system
+operational technology
+OT network
+water treatment facility
+transportation network
+air traffic control
+railway signaling
+seaport terminal

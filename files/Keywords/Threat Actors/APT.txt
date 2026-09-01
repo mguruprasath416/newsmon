@@ -1,0 +1,19 @@
+APT group
+APT campaign
+advanced persistent threat
+state-sponsored threat actor
+nation-state actor
+Lazarus Group
+Volt Typhoon
+Fancy Bear
+Cozy Bear
+Sandworm
+APT28
+APT29
+APT41
+Charming Kitten
+Mustang Panda
+SideWinder
+Kimsuky
+Turla
+MuddyWater

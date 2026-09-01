@@ -1,0 +1,8 @@
+privilege escalation
+local privilege escalation
+LPE vulnerability
+privilege escalation flaw
+root escalation
+SYSTEM privilege
+elevation of privilege
+EoP vulnerability

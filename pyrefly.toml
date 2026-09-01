@@ -1,0 +1,14 @@
+# Pyrefly configuration for ClarityTI Feed project
+# Locks Pyrefly to the project's virtual environment so it can resolve
+# all installed packages (structlog, celery, motor, etc.)
+
+python_interpreter = "d:/Feed/backend/FEED/Scripts/python.exe"
+
+[python_environment]
+python_platform = "windows"
+
+[search_path]
+# Extra paths Pyrefly should look in for imports
+site_package_path = [
+  "d:/Feed/backend/FEED/Lib/site-packages"
+]

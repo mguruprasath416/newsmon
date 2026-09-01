@@ -1,0 +1,34 @@
+# Environment Variables & Secrets
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+backend/FEED/
+venv/
+.venv/
+env/
+ENV/
+celerybeat-schedule*
+
+# Node / Next.js
+node_modules/
+frontend/node_modules/
+.next/
+frontend/.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+frontend/*.tsbuildinfo
+
+# IDE & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
