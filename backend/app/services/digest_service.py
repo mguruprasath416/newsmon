@@ -1,7 +1,9 @@
 """
 AI Daily Digest Generation Service
 """
+import re
 import json
+import httpx
 from datetime import datetime, timezone, timedelta
 from app.db.mongodb import get_articles_collection, get_digests_collection
 from app.config import settings
@@ -66,9 +68,6 @@ class DigestGenerationService:
             for a in articles
         ])
 
-        if not settings.OPENAI_API_KEY:
-            return self._mock_digest(articles, articles_text)
-
         prompt = f"""You are a Senior Threat Intelligence Analyst. Analyze these recent cybersecurity events and produce a structured intelligence briefing:
 
 EVENTS (last 24 hours):
@@ -90,20 +89,48 @@ Return a JSON object with:
   "analyst_note": "string (key recommendation for security teams today)"
 }}"""
 
-        try:
-            from openai import AsyncOpenAI
-            client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-            response = await client.chat.completions.create(
-                model=settings.OPENAI_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
-                max_tokens=3000,
-                response_format={"type": "json_object"},
-            )
-            return json.loads(response.choices[0].message.content)
-        except Exception as e:
-            log.error("AI digest generation failed", error=str(e))
-            return self._mock_digest(articles, articles_text)
+        # ── 1. Google Gemini ──────────────────────────────────────────
+        if settings.GEMINI_API_KEY:
+            try:
+                import httpx
+                model = getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={settings.GEMINI_API_KEY}"
+                payload = {
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {
+                        "temperature": 0.2,
+                        "response_mime_type": "application/json",
+                    }
+                }
+                async with httpx.AsyncClient(timeout=45.0) as client:
+                    resp = await client.post(url, json=payload, headers={"Content-Type": "application/json"})
+                    resp.raise_for_status()
+                    data = resp.json()
+
+                raw_content = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                raw_content = re.sub(r"^```(?:json)?\s*", "", raw_content, flags=re.MULTILINE)
+                raw_content = re.sub(r"\s*```$", "", raw_content, flags=re.MULTILINE).strip()
+                return json.loads(raw_content)
+            except Exception as e:
+                log.error("Gemini AI digest generation failed, trying fallback", error=str(e))
+
+        # ── 2. OpenAI ────────────────────────────────────────────────
+        if settings.OPENAI_API_KEY:
+            try:
+                from openai import AsyncOpenAI
+                client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+                response = await client.chat.completions.create(
+                    model=settings.OPENAI_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.2,
+                    max_tokens=3000,
+                    response_format={"type": "json_object"},
+                )
+                return json.loads(response.choices[0].message.content)
+            except Exception as e:
+                log.error("OpenAI digest generation failed", error=str(e))
+
+        return self._mock_digest(articles, articles_text)
 
     def _mock_digest(self, articles: list, articles_text: str) -> dict:
         # Extract trending entities from articles

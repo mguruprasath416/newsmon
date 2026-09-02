@@ -216,8 +216,41 @@ class LensAnalysisService:
         mitre_techs = _derive_mitre_mapping(content)
         threat_actor = _derive_threat_actor(content)
 
+        # ── 1. Google Gemini ──────────────────────────────────────────
+        if settings.GEMINI_API_KEY:
+            try:
+                import httpx
+                model = getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={settings.GEMINI_API_KEY}"
+                prompt = (
+                    "You are a senior CTI analyst. Synthesize this threat advisory into a concise executive summary "
+                    f"and actionable attack chain analysis:\n\n{content[:5000]}"
+                )
+                payload = {
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {
+                        "temperature": 0.1,
+                        "maxOutputTokens": 800,
+                    }
+                }
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.post(url, json=payload, headers={"Content-Type": "application/json"})
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        candidates = data.get("candidates", [])
+                        if candidates:
+                            summary_text = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+                            report = self._mock_report(content, iocs)
+                            if summary_text and len(summary_text) > 30:
+                                report["executive_summary"] = summary_text
+                            if threat_actor:
+                                report["threat_actor"] = threat_actor
+                            return report
+            except Exception as e:
+                log.warning("Gemini Lens synthesis failed, trying fallback", error=str(e))
+
+        # ── 2. OpenAI ────────────────────────────────────────────────
         api_key = (settings.OPENAI_API_KEY or "").strip()
-        # Only attempt OpenAI call if a valid non-placeholder API key is present
         if api_key and len(api_key) > 30 and api_key.startswith("sk-") and "placeholder" not in api_key.lower():
             try:
                 import asyncio
@@ -234,13 +267,14 @@ class LensAnalysisService:
                         temperature=0.1,
                         max_tokens=600,
                     ),
-                    timeout=3.0
+                    timeout=5.0
                 )
                 summary_text = response.choices[0].message.content.strip()
                 report = self._mock_report(content, iocs)
                 if summary_text and len(summary_text) > 30:
                     report["executive_summary"] = summary_text
-                report["threat_actor"] = threat_actor
+                if threat_actor:
+                    report["threat_actor"] = threat_actor
                 return report
             except Exception as e:
                 log.warning("OpenAI synthesis skipped/timed out, using fast CTI engine", error=str(e))

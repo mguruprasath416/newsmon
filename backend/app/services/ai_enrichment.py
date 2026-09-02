@@ -67,11 +67,12 @@ Rules:
 
 class AIEnrichmentService:
     """
-    CTI Classifier using NVIDIA NIM (primary) with heuristic fallback.
+    CTI Classifier using Google Gemini (primary) with NVIDIA NIM & heuristic fallbacks.
 
     Priority order:
-      1. NVIDIA NIM  — meta/llama-3.3-70b-instruct (NVIDIA_API_KEY)
-      2. Heuristic   — rule-based extractor (always available)
+      1. Google Gemini — gemini-2.5-flash (GEMINI_API_KEY)
+      2. NVIDIA NIM    — meta/llama-3.3-70b-instruct (NVIDIA_API_KEY)
+      3. Heuristic     — rule-based extractor (always available)
     """
 
     @classmethod
@@ -80,7 +81,27 @@ class AIEnrichmentService:
         Classify a threat article into 10 structured CTI fields.
         Returns a dict guaranteed to match the schema — never raises.
         """
-        # ── Primary: NVIDIA NIM ──────────────────────────────────────────
+        # ── Primary: Google Gemini ──────────────────────────────────────
+        if settings.GEMINI_API_KEY:
+            try:
+                result = await cls._enrich_with_gemini(title, body_text)
+                if result:
+                    log.info(
+                        "CTI classification via Google Gemini",
+                        model=settings.GEMINI_MODEL,
+                        claim_status=result.get("claim_status"),
+                        severity=result.get("severity"),
+                        threat_actor=result.get("threat_actor"),
+                    )
+                    return result
+            except Exception as e:
+                log.warning(
+                    "Google Gemini classification failed, trying secondary engine",
+                    error=str(e),
+                    model=settings.GEMINI_MODEL,
+                )
+
+        # ── Secondary: NVIDIA NIM ──────────────────────────────────────────
         if settings.NVIDIA_API_KEY:
             try:
                 result = await cls._enrich_with_nvidia(title, body_text)
@@ -103,6 +124,50 @@ class AIEnrichmentService:
         # ── Fallback: Heuristic ──────────────────────────────────────────
         log.info("CTI classification via heuristic fallback")
         return cls._heuristic_enrichment(title, body_text)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Google Gemini Path
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @classmethod
+    async def _enrich_with_gemini(cls, title: str, body_text: str) -> Optional[Dict[str, Any]]:
+        """
+        Call Google Gemini API with JSON output mode.
+        Model: gemini-2.5-flash
+        Auth:  GEMINI_API_KEY
+        """
+        api_key = settings.GEMINI_API_KEY
+        if not api_key:
+            return None
+
+        model = getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+
+        prompt = f"{SYSTEM_PROMPT}\n\nTitle: {title}\n\nBody:\n{body_text[:6000]}"
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": 0.1,
+                "response_mime_type": "application/json",
+            }
+        }
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, json=payload, headers={"Content-Type": "application/json"})
+            resp.raise_for_status()
+            data = resp.json()
+
+        candidates = data.get("candidates", [])
+        if not candidates:
+            return None
+
+        raw_content = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+        raw_content = re.sub(r"^```(?:json)?\s*", "", raw_content, flags=re.MULTILINE)
+        raw_content = re.sub(r"\s*```$", "", raw_content, flags=re.MULTILINE).strip()
+
+        parsed = json.loads(raw_content)
+        cls._validate_and_sanitize(parsed)
+        return parsed
 
     # ─────────────────────────────────────────────────────────────────────────
     # NVIDIA NIM Path
@@ -211,7 +276,7 @@ class AIEnrichmentService:
         # claimed_records_count
         records_str = extract_claimed_records(art)
         claimed_records_count = None
-        if records_str != "Not disclosed":
+        if records_str and records_str != "Not disclosed":
             nums = re.findall(r"\d[\d,]*", records_str)
             if nums:
                 try:
