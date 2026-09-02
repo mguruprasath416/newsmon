@@ -3,7 +3,7 @@
 > **Document Version:** 2.2.0-PROD  
 > **Target Audience:** Threat Intelligence Analysts, Security Engineers, AI/ML Research Teams, and Core Platform Developers  
 > **Platform Classification:** Enterprise Automated Cyber Threat Intelligence (CTI) & Incident Radar  
-> **Verification Status:** 53/53 Automated Tests Passing (Golden Benchmark Precision 100%, Recall 100%) 🟢  
+> **Verification Status:** 54/54 Automated Tests Passing (Golden Benchmark Precision 100%, Recall 100%) 🟢  
 
 ---
 
@@ -60,7 +60,7 @@
                                               ▼
                                   ┌────────────────────────┐
                                   │ 4-Stage Decision Gate  │
-                                  │ (Score >= 50 + Victim) │
+                                  │ (Score >= 50 + Impact) │
                                   └───────────┬────────────┘
                                               │
                     ┌─────────────────────────┴─────────────────────────┐
@@ -91,10 +91,10 @@ The platform maintains a strict separation of concerns between cataloged researc
 | **10-field CTI schema** | 🟢 **Hardened** | Full JSON extraction (`claim_status`, `severity`, `threat_actor`, `sector`, etc.). |
 | **Claim / Denial integrity** | 🟢 **Hardened** | Strict denial precedence: organization denials override uncorroborated allegations. |
 | **Official statement semantics** | 🟢 **Hardened** | Explicit admission required for `CONFIRMED`; investigations remain `CLAIMED`. |
+| **Minimum evidence quality gate** | 🟢 **Hardened** | Weak score stacking (Target Org + Actor + Claim = 55) without verified impact routes to `HUMAN_REVIEW`. |
 | **AI executive insight** | 🟢 **Hardened** | Concise `🔎 AI INSIGHT` synthesized by Google Gemini Flash. |
 | **Keyword taxonomy** | 🟢 **Hardened** | 590+ terms across 7 categories used strictly as candidate taggers (non-alerting). |
 | **Keyword-only alert prevention** | 🟢 **Hardened** | Zero keyword-only triggers; keywords feed the candidate pool only. |
-| **Multi-factor evidence gate** | 🟢 **Hardened** | Multi-factor evidence scoring ($\ge 50$ pts) requiring target org, data theft, or active impact. |
 | **Tri-state decision layer** | 🟢 **Hardened** | Deterministic 3-state output: `WEBSITE_ONLY`, `HUMAN_REVIEW`, `TEAM_ALERT`. |
 | **CyberPulse non-bypass gate** | 🟢 **Hardened** | 10+ sources triggers `high_heat`, but Teams dispatch still strictly requires critical incident criteria. |
 | **Zero-day logic** | 🟢 **Hardened** | Vulnerabilities/CVEs stay on Website; only confirmed corporate exploitation reaches Teams. |
@@ -120,9 +120,9 @@ The platform maintains a strict separation of concerns between cataloged researc
   - *Identified Target Enterprise:* **+20 pts**
   - *Identified Named Threat Actor:* **+20 pts**
   - *Attributed Actor Claim with Leak Proof:* **+15 pts**
-- **Stage 4 (Deterministic Routing):**
-  - Score $\ge 50$ AND identified target organization $\rightarrow$ `TEAM_ALERT`
-  - Score $35-49$ OR conflicting unverified claims $\rightarrow$ `HUMAN_REVIEW`
+- **Stage 4 (Deterministic Routing & Minimum Evidence Quality):**
+  - Score $\ge 50$ AND identified target organization AND verified operational impact / exfiltration / confirmation $\rightarrow$ `TEAM_ALERT`
+  - Score $\ge 50$ with weak attribution only (no impact / proof) OR Score $35-49$ $\rightarrow$ `HUMAN_REVIEW`
   - Score $< 35$ $\rightarrow$ `WEBSITE_ONLY`
 
 ---
@@ -151,7 +151,7 @@ Every ingested document in MongoDB records complete auditability metadata:
 {
   "alert_decision": "WEBSITE_ONLY | HUMAN_REVIEW | TEAM_ALERT",
   "evidence_score": 85,
-  "decision_reason": "Qualifying critical actionable incident",
+  "decision_reason": "Qualifying critical actionable incident with verified impact",
   "evidence_factors": [
     "Target Organization: Acme Corp (+20)",
     "Confirmed Incident Disclosure (+25)",
@@ -216,9 +216,12 @@ Gemini extracts 10 structured CTI parameters in valid JSON format:
 ## 6. Multi-Channel Notification & Adaptive Card Engineering
 
 ### Microsoft Teams Channel Architecture
-- **`#high-priority-news`:** Global critical data breaches, leaks, zero-days, and executive digests.
-- **`#indian-breaches`:** India-specific enterprise compromises, data leaks, and CERT-In advisories.
-- **`#middle-east-companies`:** GCC & Middle East corporate incidents and regional CERT alerts.
+- **`#high-priority-news`:** Qualifying global high-impact cyber incidents (ransomware, corporate breaches, mass data theft, critical outages).
+- **`#indian-breaches`:** Qualifying India-specific enterprise breaches, corporate compromises, data theft, and disruption.
+- **`#middle-east-companies`:** Qualifying GCC / Middle East enterprise compromises, breaches, and critical disruptions.
+- **`#daily-digest`:** Daily executive threat intelligence summaries and incident metrics.
+
+*(Note: CERT advisories remain Website/RAG intelligence unless they independently describe a qualifying critical organizational incident passing the normal Teams gate).*
 
 ### Card Format Specification
 ```text
@@ -309,7 +312,7 @@ RECORD COUNT & CLAIM INTEGRITY:
    - **Rule D:** `claim_status = denied` $\rightarrow$ requires explicit company denial statement.
    - **Rule E:** `threat_actor` $\rightarrow$ `"Unattributed"` when no named actor is explicitly stated.
    - **Rule F:** `cves` $\rightarrow$ `[]` when no explicit CVE ID is cited.
-   - **Rule G:** `team_alert = true` $\rightarrow$ requires $\ge 50$ points on Multi-Factor Evidence Validation Gate.
+   - **Rule G:** `team_alert = true` $\rightarrow$ requires $\ge 50$ points on Multi-Factor Evidence Validation Gate AND verified operational impact.
 
 ---
 
@@ -388,7 +391,7 @@ Enforces automated release gates and regression testing across the entire intell
 ### 1. Test Suite Coverage (`backend/tests/`)
 | Test Suite | Purpose | Tests | Status |
 | :--- | :--- | :---: | :---: |
-| [`test_audit_hardening_verifications.py`](file:///d:/Feed/backend/tests/test_audit_hardening_verifications.py) | CyberPulse non-bypass, investigation statements, SSRF IPv4-mapped IPv6, zero-day policy | 10 | 🟢 **PASS** |
+| [`test_audit_hardening_verifications.py`](file:///d:/Feed/backend/tests/test_audit_hardening_verifications.py) | CyberPulse non-bypass, investigation statements, 55-score weak claim gate, SSRF IPv4-mapped IPv6, zero-day policy | 11 | 🟢 **PASS** |
 | [`test_golden_benchmark.py`](file:///d:/Feed/backend/tests/test_golden_benchmark.py) | 17-case positive & negative ground truth regression benchmark | 3 | 🟢 **PASS** |
 | [`test_alert_decision_engine.py`](file:///d:/Feed/backend/tests/test_alert_decision_engine.py) | 4-stage pipeline, zero-day handling, multi-factor scoring | 5 | 🟢 **PASS** |
 | [`test_claim_lifecycle.py`](file:///d:/Feed/backend/tests/test_claim_lifecycle.py) | Claimed vs confirmed vs explicit denial precedence | 5 | 🟢 **PASS** |
@@ -398,7 +401,7 @@ Enforces automated release gates and regression testing across the entire intell
 | [`test_deduplication_and_material_updates.py`](file:///d:/Feed/backend/tests/test_deduplication_and_material_updates.py) | 72h fingerprinting, multi-source suppression, material updates | 3 | 🟢 **PASS** |
 | [`test_ai_validation_and_safety.py`](file:///d:/Feed/backend/tests/test_ai_validation_and_safety.py) | Malformed JSON sanitization, prompt injection resistance, heuristics | 3 | 🟢 **PASS** |
 | [`test_cyberpulse.py`](file:///d:/Feed/backend/tests/test_cyberpulse.py) | Viral thresholds (5 trending, 10 alert), source deduplication | 8 | 🟢 **PASS** |
-| **Total Test Suite** | **Comprehensive Automated Regression Suite** | **53** | 🟢 **53/53 PASS** |
+| **Total Test Suite** | **Comprehensive Automated Regression Suite** | **54** | 🟢 **54/54 PASS** |
 
 ### 2. Golden Dataset Regression Benchmark Performance
 $$\text{MEASURED ON GOLDEN REGRESSION BENCHMARK (17 CASES):} \quad \text{PRECISION: 100\%} \quad\vert\quad \text{RECALL: 100\%} \quad\vert\quad \text{FPR: 0.0\%} \quad\vert\quad \text{FNR: 0.0\%} 🟢$$

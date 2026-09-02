@@ -227,3 +227,26 @@ def test_tri_state_human_review_boundary():
     assert eval_res["score"] >= 35 and eval_res["score"] < 50
     assert eval_res["decision"] == "HUMAN_REVIEW"
     assert is_critical_actionable_incident(borderline_art) is False
+
+
+def test_weak_evidence_score_55_attribution_without_impact_routes_to_human_review():
+    """
+    Section 2 & 3: Target Org (+20) + Named Actor (+20) + Actor Claim (+15) = 55 pts.
+    Without verified operational impact, exfiltration, or confirmed corporate disclosure,
+    it MUST route to HUMAN_REVIEW and NEVER bypass to TEAM_ALERT.
+    """
+    weak_art = {
+        "title": "LockBit mentions Acme Corp on dark web forum",
+        "summary": "LockBit threat actors made an uncorroborated post mentioning Acme Corp.",
+        "content_clean": "On a forum thread, LockBit claims Acme Corp. No sample files, no quantified records, no corporate confirmation, and no outage reported.",
+        "target_company": "Acme Corp",
+        "threat_actor": "LockBit",
+        "threat_actors": ["LockBit"],
+        "claim_status": "claimed",
+        "source_name": "Forum Monitor"
+    }
+    eval_res = TeamAlertDecisionEngine.evaluate(weak_art)
+    assert eval_res["score"] == 55
+    assert eval_res["has_meaningful_impact"] is False
+    assert eval_res["decision"] == "HUMAN_REVIEW"
+    assert is_critical_actionable_incident(weak_art) is False

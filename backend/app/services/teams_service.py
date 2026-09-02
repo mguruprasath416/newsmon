@@ -1,12 +1,11 @@
 """
 Microsoft Teams Multi-Channel Webhook Service.
 
-Routes articles strictly to their corresponding Microsoft Teams channel:
-1. #breach         — Status-tagged company breaches ([CLAIMED], [CONFIRMED], [DENIED])
-2. #ransomware     — Ransomware attacks & extortion groups
-3. #vulnerability  — Zero-days, CVEs, RCEs, patches
-4. #apt            — Nation-state threat actors & espionage campaigns
-5. #indian-based   — India-specific threats & CERT-In advisories
+Routes verified high-severity actionable cyber incident alerts strictly to their corresponding Microsoft Teams channel:
+1. #high-priority-news    — Qualifying global high-impact cyber incidents (ransomware, corporate breaches, mass data theft, critical outages)
+2. #indian-breaches       — Qualifying India-specific enterprise breaches, corporate compromises, data theft, and disruption
+3. #middle-east-companies — Qualifying GCC / Middle East enterprise compromises, breaches, and critical disruptions
+4. #daily-digest          — Daily executive threat intelligence summaries and incident metrics
 """
 import re
 import httpx
@@ -1026,10 +1025,26 @@ class TeamAlertDecisionEngine:
             evidence_factors.append(f"Threat Actor Identified: {actor} (+20)")
 
         # ── Stage 4: Deterministic Alert Routing ──
-        # Threshold: Score >= 50 AND identified target organization required for Team Alert
-        if evidence_score >= 50 and has_victim_company:
+        # Minimum Evidence Quality & Impact Verification:
+        # A high numerical score alone (e.g. Target Org + Actor Attribution + Claim = 55) is NOT enough.
+        # Team Alert strictly requires verified operational impact, quantified data theft, ransomware deployment,
+        # infrastructure disruption, or confirmed corporate disclosure.
+        has_meaningful_impact_or_proof = (
+            has_confirmed or
+            bool(claimed_records and claimed_records > 0) or
+            has_data_theft or
+            has_compromise or
+            has_ransomware or
+            has_infra or
+            has_disruption
+        )
+
+        if evidence_score >= 50 and has_victim_company and has_meaningful_impact_or_proof:
             decision = "TEAM_ALERT"
-            reason = f"Qualifying critical actionable incident (Evidence Score: {evidence_score})"
+            reason = f"Qualifying critical actionable incident with verified impact (Evidence Score: {evidence_score})"
+        elif evidence_score >= 50 and has_victim_company and not has_meaningful_impact_or_proof:
+            decision = "HUMAN_REVIEW"
+            reason = f"High attribution score ({evidence_score} pts) but lacks verified operational impact, exfiltration evidence, or corporate confirmation"
         elif evidence_score >= 35:
             decision = "HUMAN_REVIEW"
             reason = f"Borderline incident requiring analyst review (Evidence Score: {evidence_score})"
@@ -1042,6 +1057,7 @@ class TeamAlertDecisionEngine:
             "score": evidence_score,
             "factors": evidence_factors,
             "target_company": comp if has_victim_company else "N/A",
+            "has_meaningful_impact": has_meaningful_impact_or_proof,
             "reason": reason
         }
 
