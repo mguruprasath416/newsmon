@@ -430,20 +430,30 @@ class RSSCollector(BaseCollector):
                 published_at = None
                 if hasattr(entry, 'published_parsed') and entry.published_parsed:
                     import time
-                    published_at = datetime.fromtimestamp(
-                        time.mktime(entry.published_parsed), tz=timezone.utc
-                    )
+                    try:
+                        published_at = datetime.fromtimestamp(
+                            time.mktime(entry.published_parsed), tz=timezone.utc
+                        )
+                    except Exception:
+                        published_at = datetime.now(timezone.utc)
 
                 content = ""
                 if hasattr(entry, 'content') and entry.content:
-                    content = entry.content[0].get('value', '')
-                elif hasattr(entry, 'summary'):
-                    content = entry.summary
-                elif hasattr(entry, 'description'):
-                    content = entry.description
+                    try:
+                        if isinstance(entry.content, list) and len(entry.content) > 0:
+                            first_val = entry.content[0]
+                            content = str(first_val.get('value', '') if isinstance(first_val, dict) else first_val or '')
+                        else:
+                            content = str(entry.content or '')
+                    except Exception:
+                        content = ""
+                elif hasattr(entry, 'summary') and entry.summary:
+                    content = str(entry.summary or '')
+                elif hasattr(entry, 'description') and entry.description:
+                    content = str(entry.description or '')
 
                 # Extract clean text from HTML if needed
-                if '<' in content:
+                if content and isinstance(content, str) and '<' in content:
                     try:
                         from bs4 import BeautifulSoup
                         content = BeautifulSoup(content, 'lxml').get_text(separator=' ', strip=True)
@@ -451,24 +461,36 @@ class RSSCollector(BaseCollector):
                         pass
 
                 # Clean summary — strip HTML if present (e.g. Medium RSS)
-                raw_summary = entry.get('summary', '') or ''
-                if '<' in raw_summary:
+                raw_summary_val = ""
+                if isinstance(entry, dict) or hasattr(entry, 'get'):
+                    raw_summary_val = entry.get('summary', '') or entry.get('description', '') or ''
+                elif hasattr(entry, 'summary'):
+                    raw_summary_val = getattr(entry, 'summary', '')
+                elif hasattr(entry, 'description'):
+                    raw_summary_val = getattr(entry, 'description', '')
+                
+                raw_summary = str(raw_summary_val or '')
+                if raw_summary and '<' in raw_summary:
                     try:
                         from bs4 import BeautifulSoup as _BS
                         raw_summary = _BS(raw_summary, 'lxml').get_text(separator=' ', strip=True)
                     except Exception:
                         import re as _re
                         raw_summary = _re.sub(r'<[^>]+>', ' ', raw_summary).strip()
-                raw_summary = raw_summary[:1000]
+                raw_summary = str(raw_summary)[:1000]
+
+                entry_link = str(entry.get('link', '') if hasattr(entry, 'get') else getattr(entry, 'link', ''))
+                entry_title = str(entry.get('title', 'Untitled') if hasattr(entry, 'get') else getattr(entry, 'title', 'Untitled'))[:500]
+                entry_author = str(entry.get('author', '') if hasattr(entry, 'get') else getattr(entry, 'author', '')) or None
 
                 articles.append(RawArticle(
-                    url=entry.get('link', ''),
-                    title=entry.get('title', 'Untitled')[:500],
-                    content=content,
+                    url=entry_link,
+                    title=entry_title,
+                    content=str(content or ''),
                     summary=raw_summary,
-                    author=entry.get('author', None),
+                    author=entry_author,
                     published_at=published_at,
-                    tags=[tag.term for tag in getattr(entry, 'tags', []) if hasattr(tag, 'term')],
+                    tags=[str(tag.term) for tag in getattr(entry, 'tags', []) if hasattr(tag, 'term')],
                 ))
 
             return articles
