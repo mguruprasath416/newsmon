@@ -419,6 +419,24 @@ class ThreatActorCreate(BaseModel):
 ```python
 class TeamsWebhookRequest(BaseModel):
     webhook_url: str
-    channel: Optional[str] = "indian_based"  # 'indian_based' | 'gcc_middle_east'
+    channel: Optional[str] = "high_priority_news"  # 'high_priority_news' | 'indian_breaches' | 'middle_east_companies'
     auto_dispatch: Optional[bool] = False
 ```
+
+---
+
+## 18. Critical Alerts & Decision Engine Schema
+
+Defines the triage criteria used by `is_critical_actionable_incident()` to separate broad website intelligence from emergency Team Alerts:
+
+```python
+class CriticalAlertDecision(BaseModel):
+    is_actionable_incident: bool
+    incident_category: str          # 'Data Breach' | 'Data Theft' | 'Ransomware' | 'Critical Infrastructure' | 'Service Disruption' | 'Company Compromise'
+    target_organization: Optional[str]
+    target_sector: Optional[str]
+    claim_status: Optional[str]     # 'confirmed' | 'claimed' | 'denied'
+    ai_insight: str                 # Synthesized by Google Gemini Flash
+    dispatch_destination: str       # 'WEBSITE_ONLY' | 'TEAM_ALERT'
+```
+

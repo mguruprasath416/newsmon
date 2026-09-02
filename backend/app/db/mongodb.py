@@ -46,6 +46,27 @@ class MongoDB:
             await events_col.create_index([("source_count", -1)], background=True)
             await events_col.create_index([("status", 1), ("priority", 1)], background=True)
             await events_col.create_index([("created_at", -1)], background=True)
+            # Incidents Collection Indexes
+            incidents_col = cls.collection("incidents")
+            await incidents_col.create_index([("incident_id", 1)], unique=True, background=True)
+            await incidents_col.create_index([("target_organization", 1), ("incident_type", 1)], background=True)
+            await incidents_col.create_index([("severity", 1), ("claim_status", 1)], background=True)
+            await incidents_col.create_index([("first_reported_at", -1)], background=True)
+            await incidents_col.create_index([("teams_dispatched", 1)], background=True)
+
+            # Evidence Collection Indexes
+            evidence_col = cls.collection("evidence")
+            await evidence_col.create_index([("incident_id", 1)], background=True)
+            await evidence_col.create_index([("article_id", 1)], background=True)
+            await evidence_col.create_index([("evidence_score", -1)], background=True)
+
+            # Alert Dispatches Audit Collection Indexes
+            dispatches_col = cls.collection("alert_dispatches")
+            await dispatches_col.create_index([("alert_id", 1)], unique=True, background=True)
+            await dispatches_col.create_index([("fingerprint", 1)], background=True)
+            await dispatches_col.create_index([("dispatched_at", -1)], background=True)
+            await dispatches_col.create_index([("channel", 1), ("status", 1)], background=True)
+
             log.info("MongoDB compound indexes verified")
         except Exception as e:
             log.warning("MongoDB index creation warning", error=str(e))
@@ -74,6 +95,18 @@ def get_sources_collection():
 def get_articles_collection():
     return MongoDB.collection("articles")
 
+def get_incidents_collection():
+    return MongoDB.collection("incidents")
+
+def get_evidence_collection():
+    return MongoDB.collection("evidence")
+
+def get_alert_dispatches_collection():
+    return MongoDB.collection("alert_dispatches")
+
+def get_logs_collection():
+    return MongoDB.collection("system_logs")
+
 def get_reports_collection():
     return MongoDB.collection("reports")
 
@@ -88,6 +121,9 @@ def get_threat_actors_collection():
 
 def get_malware_collection():
     return MongoDB.collection("malware")
+
+def get_events_collection():
+    return MongoDB.collection("viral_news_events")
 
 def get_campaigns_collection():
     return MongoDB.collection("campaigns")

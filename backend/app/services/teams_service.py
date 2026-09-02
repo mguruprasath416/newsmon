@@ -11,8 +11,9 @@ Routes articles strictly to their corresponding Microsoft Teams channel:
 import re
 import httpx
 import asyncio
+import hashlib
 import urllib.parse
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 from datetime import datetime, timezone, timedelta
 from app.config import settings
 import structlog
@@ -591,6 +592,195 @@ def extract_severity_level(art: Dict[str, Any]) -> str:
     return "INFO"
 
 
+# ── Incident Registry & Multi-Source Correlation ──────────────────────────────
+_INCIDENT_STATE_REGISTRY: Dict[str, Dict[str, Any]] = {}
+_DISPATCHED_TEAMS_KEYS: Set[str] = set()
+
+
+def generate_incident_fingerprint(art: Dict[str, Any]) -> str:
+    """
+    Generate stable canonical incident fingerprint based on:
+    - Target Organization (normalized)
+    - Incident Type (e.g. ransomware, data_breach)
+    - Threat Actor (or unattributed)
+    - Target Country
+    - 72-Hour Correlation Time Window
+    """
+    comp = (art.get("target_company") or extract_breached_company(art) or "unknown").strip().lower()
+    comp_norm = re.sub(r'[^a-z0-9]', '', comp) or "unknown"
+    
+    inc_type = (art.get("incident_type") or determine_incident_type(art) or "incident").strip().lower()
+    actor = (art.get("threat_actor") or extract_threat_actor(art) or "unattributed").strip().lower()
+    country = (art.get("target_country") or extract_country(art) or "global").strip().lower()
+    
+    # 72-hour correlation window bucket
+    p_date = art.get("published_at") or art.get("crawled_at") or datetime.now(timezone.utc)
+    if isinstance(p_date, str):
+        try:
+            p_date = datetime.fromisoformat(p_date.replace("Z", "+00:00"))
+        except Exception:
+            p_date = datetime.now(timezone.utc)
+    if p_date.tzinfo is None:
+        p_date = p_date.replace(tzinfo=timezone.utc)
+        
+    day_epoch = int(p_date.timestamp() // (3 * 86400))
+    seed = f"{comp_norm}::{inc_type}::{actor}::{country}::{day_epoch}"
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
+
+
+def evaluate_incident_deduplication_and_update(art: Dict[str, Any], webhook_url: str = "") -> Dict[str, Any]:
+    """
+    Evaluates multi-source incident deduplication and material update tracking:
+    - Same incident from multiple sources -> ONE Team Alert (Duplicate = True)
+    - Claim -> Confirmation transition -> Material Update (Duplicate = False, Update = True)
+    - Claim -> Denial transition -> Material Update (Duplicate = False, Update = True)
+    - New record count disclosed -> Material Update (Duplicate = False, Update = True)
+    """
+    fp = generate_incident_fingerprint(art)
+    dispatch_key = f"{webhook_url}::{fp}"
+    
+    existing_incident = _INCIDENT_STATE_REGISTRY.get(fp)
+    claim_status = (art.get("claim_status") or determine_breach_status(art) or "claimed").lower()
+    records_count = art.get("claimed_records_count")
+    severity = (art.get("severity") or extract_severity_level(art) or "medium").lower()
+    
+    if not existing_incident:
+        _INCIDENT_STATE_REGISTRY[fp] = {
+            "fingerprint": fp,
+            "claim_status": claim_status,
+            "claimed_records_count": records_count,
+            "severity": severity,
+            "target_company": art.get("target_company") or extract_breached_company(art),
+            "first_seen": datetime.now(timezone.utc),
+            "source_count": 1,
+            "dispatched": False
+        }
+        return {
+            "is_duplicate": False,
+            "is_update": False,
+            "fingerprint": fp,
+            "reason": "New qualifying incident"
+        }
+
+    # Compare for material updates
+    existing_status = existing_incident.get("claim_status")
+    existing_records = existing_incident.get("claimed_records_count")
+    existing_incident["source_count"] += 1
+
+    # 1. Claim -> Confirmation Transition
+    if existing_status == "claimed" and claim_status == "confirmed":
+        existing_incident["claim_status"] = "confirmed"
+        return {
+            "is_duplicate": False,
+            "is_update": True,
+            "fingerprint": fp,
+            "update_type": "Claim Confirmed",
+            "reason": "Incident officially confirmed by organization/authority"
+        }
+
+    # 2. Claim/Confirmed -> Denial Transition
+    if existing_status in ("claimed", "confirmed") and claim_status == "denied":
+        existing_incident["claim_status"] = "denied"
+        return {
+            "is_duplicate": False,
+            "is_update": True,
+            "fingerprint": fp,
+            "update_type": "Incident Denied",
+            "reason": "Organization issued official denial statement"
+        }
+
+    # 3. New Record Count Disclosed
+    if existing_records is None and records_count is not None:
+        existing_incident["claimed_records_count"] = records_count
+        return {
+            "is_duplicate": False,
+            "is_update": True,
+            "fingerprint": fp,
+            "update_type": "Record Count Disclosed",
+            "reason": f"New record volume disclosed: {records_count}"
+        }
+
+    # If already dispatched and no material change -> Suppress as duplicate coverage
+    if dispatch_key in _DISPATCHED_TEAMS_KEYS or existing_incident.get("dispatched"):
+        return {
+            "is_duplicate": True,
+            "is_update": False,
+            "fingerprint": fp,
+            "reason": f"Duplicate multi-source coverage (Reported by {existing_incident['source_count']} sources)"
+        }
+
+    return {
+        "is_duplicate": False,
+        "is_update": False,
+        "fingerprint": fp,
+        "reason": "First dispatch for this incident"
+    }
+
+
+def _is_already_dispatched(art: Dict[str, Any], webhook_url: str) -> bool:
+    """Helper used during dispatch loop to suppress duplicate alerts."""
+    res = evaluate_incident_deduplication_and_update(art, webhook_url)
+    return res["is_duplicate"] and not res.get("is_update")
+
+
+async def _mark_dispatched_in_db(art: Dict[str, Any], webhook_url: str):
+    """Mark incident fingerprint as dispatched to prevent duplicate notifications."""
+    fp = generate_incident_fingerprint(art)
+    dispatch_key = f"{webhook_url}::{fp}"
+    _DISPATCHED_TEAMS_KEYS.add(dispatch_key)
+    if fp in _INCIDENT_STATE_REGISTRY:
+        _INCIDENT_STATE_REGISTRY[fp]["dispatched"] = True
+
+
+def is_indian_news(art: Dict[str, Any]) -> bool:
+    """Check if article involves Indian victim entity or target country."""
+    target_c = (art.get("target_country") or extract_country(art) or "").strip()
+    target_c_clean = re.sub(r'[\U0001F1E6-\U0001F1FF\U0001F300-\U0001F9FF]', '', target_c).strip().lower()
+    if target_c_clean in ("india", "in", "ind"):
+        return True
+    
+    comp = (art.get("target_company") or extract_breached_company(art) or "").strip()
+    title = art.get("title") or ""
+    summary = art.get("summary") or ""
+    clean_body = (art.get("content_clean") or "")[:2000]
+    full_text = f"{comp} {title} {summary} {clean_body}"
+    
+    return bool(INDIAN_COMPANIES_REGEX.search(full_text) or FOREIGN_IN_INDIA_REGEX.search(full_text))
+
+
+def is_gcc_middle_east_news(art: Dict[str, Any]) -> bool:
+    """Check if article involves Middle East / GCC victim entity or target country."""
+    target_c = (art.get("target_country") or extract_country(art) or "").strip()
+    target_c_clean = re.sub(r'[\U0001F1E6-\U0001F1FF\U0001F300-\U0001F9FF]', '', target_c).strip().lower()
+    if any(c.lower() in target_c_clean for c in MIDDLE_EAST_COUNTRIES_SET):
+        return True
+        
+    comp = (art.get("target_company") or extract_breached_company(art) or "").strip()
+    title = art.get("title") or ""
+    summary = art.get("summary") or ""
+    clean_body = (art.get("content_clean") or "")[:2000]
+    full_text = f"{comp} {title} {summary} {clean_body}"
+    
+    if any(c.lower() in full_text.lower() for c in MIDDLE_EAST_COUNTRIES_SET):
+        return True
+    
+    return bool(GCC_COMPANIES_REGEX.search(full_text) or FOREIGN_IN_MIDDLE_EAST_REGEX.search(full_text))
+
+
+def get_target_channel_route(art: Dict[str, Any]) -> str:
+    """
+    Strict target/victim-based regional channel routing:
+    - Target in India -> #indian-breaches
+    - Target in Middle East / GCC -> #middle-east-companies
+    - Global / Other Critical -> #high-priority-news
+    """
+    if is_indian_news(art):
+        return "#indian-breaches"
+    if is_gcc_middle_east_news(art):
+        return "#middle-east-companies"
+    return "#high-priority-news"
+
+
 def format_timestamp_pretty(dt_val: Any) -> str:
     """Format datetime into 'Aug 20, 2026, 07:48 AM'."""
     if isinstance(dt_val, datetime):
@@ -604,131 +794,222 @@ def format_timestamp_pretty(dt_val: Any) -> str:
     return datetime.now(timezone.utc).strftime("%b %d, %Y, %I:%M %p")
 
 
-def is_company_breach_or_incident(art: Dict[str, Any]) -> bool:
+# ── Critical Actionable Incident Engine for Team Alerts ───────────────────────
+_CRITICAL_INCIDENT_TERMS = re.compile(
+    r'\b('
+    # Data Breach & Theft
+    r'data breach|database breach|corporate breach|company breach|security breach|'
+    r'customer data breach|employee data breach|database compromised|network breach|system breach|'
+    r'massive data breach|large-scale data breach|sensitive data exposed|customer records exposed|'
+    r'personal data exposed|mass data exposure|confidential data exposed|'
+    r'data stolen|data theft|stolen customer data|stolen employee data|stolen corporate data|'
+    r'sensitive data stolen|customer records stolen|employee records stolen|personal data stolen|'
+    r'financial data stolen|medical records stolen|patient data stolen|database stolen|database exfiltrated|'
+    r'data exfiltration|mass data exfiltration|large-scale data theft|information stolen|records stolen|'
+    # Ransomware Incidents & Encryptions
+    r'ransomware attack|ransomware hit|ransomware incident|ransomware victim|company hit by ransomware|'
+    r'organization hit by ransomware|hospital hit by ransomware|bank hit by ransomware|government hit by ransomware|'
+    r'ransomware outbreak|ransomware infection|systems encrypted|systems were encrypted|files encrypted|'
+    r'network encrypted|operations disrupted by ransomware|ransom demand|ransomware extortion|double extortion|'
+    r'triple extortion|ransomware data leak|ransomware data theft|ransomware data exfiltration|'
+    # Company Compromise & Unauthorized Access
+    r'company compromised|company hacked|company breached|organization compromised|organization hacked|'
+    r'organization breached|corporate network compromised|corporate systems compromised|internal systems compromised|'
+    r'enterprise network compromised|enterprise systems compromised|corporate account compromised|'
+    r'cloud account compromised|administrator account compromised|employee accounts compromised|'
+    r'company credentials stolen|corporate credentials stolen|unauthorized access to company|'
+    r'threat actors gained access|attackers gained access|attacker gained access|'
+    # Critical Infrastructure & Major Disruption
+    r'critical infrastructure attack|critical infrastructure cyberattack|critical infrastructure compromised|'
+    r'power grid attack|electric grid attack|power plant cyberattack|energy infrastructure attack|'
+    r'water infrastructure attack|water utility cyberattack|telecom infrastructure attack|'
+    r'hospital infrastructure attack|transportation infrastructure attack|airport cyberattack|'
+    r'railway cyberattack|pipeline cyberattack|nuclear facility cyberattack|critical infrastructure ransomware|'
+    r'service disrupted by cyberattack|major service disruption|cyberattack disrupts services|'
+    r'cyberattack disrupted operations|business operations disrupted|network outage caused by cyberattack|'
+    # Extortion & Major Leaks
+    r'threat actor claims breach|hacker claims breach|hacker claims data theft|threat group claims data theft|'
+    r'extortion claim|extortion attack|data extortion|stolen data published|stolen data leaked|breached data published'
+    r')\b',
+    re.IGNORECASE
+)
+
+_ORDINARY_NEWS_EXCLUSIONS = re.compile(
+    r'\b('
+    r'security advisory|patch tuesday|security update|firmware update|patch available|'
+    r'bug bounty|cve-\d{4}-\d+|vulnerability in|zero-day in|flaw in|bug in|'
+    r'cisa adds|cisa adds two|known exploited vulnerabilities|kev catalog|'
+    r'proof of concept|poc published|security researchers discover|researchers find|'
+    r'how to patch|mitigation steps|advisory released|security bulletin|release notes'
+    r')\b',
+    re.IGNORECASE
+)
+
+
+# ── Anti-False-Positive & Hypothetical Context Filter ────────────────────────
+_HYPOTHETICAL_OR_NON_INCIDENT = re.compile(
+    r'\b('
+    r'could allow attackers to|could lead to a breach|could allow data theft|'
+    r'potential vulnerability that might|theoretically allow|theoretical attack|'
+    r'hypothetical scenario|simulation|simulated breach|tabletop exercise|'
+    r'penetration testing writeup|pen.?test demo|security training|awareness training|'
+    r'phishing simulation|phishing test|proof of concept demonstrates how|'
+    r'vulnerability could be exploited to|flaw could allow'
+    r')\b',
+    re.IGNORECASE
+)
+
+
+class TeamAlertDecisionEngine:
     """
-    Detect if an article specifically involves an Enterprise Breach, Data Leak, Ransomware,
-    Extortion, or targeted compromise (as opposed to a general CVE / software advisory / tech news).
+    Explicit 4-Stage Decision Layer for Team Alerts:
+    Stage 1: Keyword Candidate Tagging (Non-Alerting)
+    Stage 2: Anti-False-Positive Protection (Hypothetical & PR Patchwork Filter)
+    Stage 3: Multi-Factor Evidence Validation Gate (Score >= 50)
+    Stage 4: Deterministic Alert Routing (TEAM_ALERT vs WEBSITE_ONLY)
     """
-    if not is_cyber_news(art):
-        return False
 
-    text = f"{art.get('title', '')} {art.get('summary', '')}".lower()
-    tags = [str(t).lower() for t in (art.get("tags") or [])]
+    @classmethod
+    def evaluate(cls, art: Dict[str, Any]) -> Dict[str, Any]:
+        if not is_cyber_news(art):
+            return {"decision": "WEBSITE_ONLY", "score": 0, "reason": "Non-cyber content"}
 
-    # Explicit breach / leak / ransomware indicators
-    breach_indicators = [
-        "data breach", "database leak", "db leak", "db leaked", "records leaked",
-        "records stolen", "ransomware attack", "ransomware hits", "extortion", "claimed breach",
-        "confirms breach", "leaked credentials", "compromised database", "dump leaked",
-        "hacked and leaked", "stolen data", "exfiltrated data", "dark web leak", "stolen records",
-        "compromised accounts", "data leak", "data dump"
-    ]
-    has_breach_terms = any(k in text for k in breach_indicators) or any(t in tags for t in ["breach", "data-leak", "ransomware", "leak", "extortion", "data-breach"])
+        title = (art.get("title") or "").strip()
+        summary = (art.get("summary") or "").strip()
+        clean_body = (art.get("content_clean") or "")[:3000]
+        full_text = f"{title} {summary} {clean_body}".lower()
 
-    # If it is clearly a vulnerability advisory or CVE bulletin, it is a general advisory
-    if any(k in text for k in ["vulnerabilit", "security flaw", "patch advisory", "cve-", "security update", "patch tuesday", "advisory ciad-", "buffer overflow"]) and not has_breach_terms:
-        return False
+        # ── Stage 2: Anti-False-Positive Protection ──
+        if _HYPOTHETICAL_OR_NON_INCIDENT.search(title) or _HYPOTHETICAL_OR_NON_INCIDENT.search(summary[:300]):
+            return {
+                "decision": "WEBSITE_ONLY",
+                "score": 0,
+                "reason": "Hypothetical, simulation, or non-incident vulnerability context"
+            }
 
-    inc_type = determine_incident_type(art).lower()
-    comp = extract_breached_company(art)
-
-    # Must have both breach characteristics and an identified affected organization
-    if (has_breach_terms or inc_type in ["data breach", "data leak", "ransomware", "supply chain attack"]) and comp and comp not in ("Not Specified", "Unknown", "Target Organization"):
-        return True
-
-    return False
-
-
-def is_gcc_middle_east_news(art: Dict[str, Any]) -> bool:
-    """
-    Matches ALL cyber news for GCC & Middle East region:
-      - National CERT advisories (aeCERT, NCA Saudi, OCERT Oman, EG-CERT, INCD, CERT-IQ)
-      - Middle East / GCC enterprises (Aramco, NEOM, Etisalat, FAB, QNB, STC, BAPCO, etc.)
-      - Foreign companies operating in Middle East
-      - Regional threat actors, attacks, vulnerabilities, and data breaches
-    """
-    if not is_cyber_news(art):
-        return False
-
-    country_name = art.get("target_country") or extract_country(art)
-    company_name = extract_breached_company(art)
-
-    title = art.get("title") or ""
-    summary = art.get("summary") or ""
-    source_name = (art.get("source_name") or "").lower()
-    text = f"{title} {summary} {' '.join(art.get('tags') or [])}".lower()
-
-    # Check for Middle East CERT sources
-    if any(k in source_name for k in ["aecert", "uae cert", "nca", "saudi", "ocert", "oman", "eg-cert", "egypt", "incd", "israel", "cert-iq", "iraq"]):
-        return True
-
-    # Check if explicitly mentions a Middle East / GCC enterprise or Foreign company in Middle East
-    has_me_enterprise = (
-        bool(GCC_COMPANIES_REGEX.search(text))
-        or bool(FOREIGN_IN_MIDDLE_EAST_REGEX.search(text))
-        or (company_name in [
-            "Saudi Aramco", "NEOM", "Etisalat", "First Abu Dhabi Bank", "Qatar National Bank",
-            "Saudi Telecom Company", "Ooredoo", "Zain Group", "BAPCO"
+        # Check for ordinary vulnerability / CVE / Patchwork without active victim breach
+        has_victim_headline = any(k in title.lower() for k in [
+            "stolen", "breached", "hits", "hit by", "hacked", "extort", "compromised",
+            "leaked", "confirms breach", "claims breach", "claims data", "data leak", "encrypted"
         ])
-    )
+        if _ORDINARY_NEWS_EXCLUSIONS.search(title) and not has_victim_headline:
+            return {
+                "decision": "WEBSITE_ONLY",
+                "score": 0,
+                "reason": "Routine vulnerability, advisory, or patch update"
+            }
 
-    # Check if target country or text mentions GCC / Middle East
-    is_me_region = (country_name in MIDDLE_EAST_COUNTRIES_SET) or any(
-        kw in text for kw in [
-            "gcc", "uae", "united arab emirates", "dubai", "abu dhabi", "saudi", "saudi arabia",
-            "ksa", "riyadh", "aramco", "neom", "qatar", "doha", "kuwait", "bahrain", "manama",
-            "oman", "muscat", "middle east", "middle-east", "israel", "tel aviv", "egypt", "cairo",
-            "iran", "tehran", "iraq", "baghdad", "jordan", "lebanon", "turkey", "istanbul", "yemen", "syria"
-        ]
-    )
+        # ── Stage 3: Multi-Factor Evidence Validation Gate ──
+        evidence_score = 0
+        evidence_factors = []
 
-    return is_me_region or has_me_enterprise
+        # Factor 1: Data Theft & Exfiltration Evidence (+35)
+        claimed_records = extract_claimed_records(art) or art.get("claimed_records_count")
+        has_data_theft = bool(claimed_records) or any(k in full_text for k in [
+            "records stolen", "data stolen", "stolen customer data", "stolen employee data",
+            "patient records", "customer database", "database exfiltrated", "mass data exfiltration",
+            "stolen credentials", "data theft", "database stolen", "exfiltrated customer", "data exfiltrated",
+            "exfiltrated"
+        ])
+        if has_data_theft:
+            evidence_score += 35
+            evidence_factors.append(f"Data Theft / Exfiltration (Records: {claimed_records or 'Detected'})")
+
+        # Factor 2: Corporate Compromise & Unauthorized Access (+30)
+        has_compromise = any(k in full_text for k in [
+            "corporate network compromised", "company compromised", "enterprise network compromised",
+            "organization compromised", "internal systems compromised", "unauthorized access to internal",
+            "unauthorized access to company", "attackers gained access", "threat actors gained access",
+            "compromised corporate", "bank compromised", "company breached", "organization breached", "was breached"
+        ])
+        if has_compromise:
+            evidence_score += 30
+            evidence_factors.append("Enterprise Compromise / Unauthorized Access")
+
+        # Factor 3: Ransomware Deployment & Encrypted Systems (+30)
+        has_ransomware = any(k in full_text for k in [
+            "ransomware attack", "systems encrypted", "files encrypted", "operations disrupted by ransomware",
+            "hit by ransomware", "ransom demand", "double extortion", "ransomware outbreak", "ransomware victim"
+        ])
+        if has_ransomware:
+            evidence_score += 30
+            evidence_factors.append("Ransomware Deployment / Systems Encrypted")
+
+        # Factor 4: Extortion / Leak Site Listing (+25)
+        has_extortion = any(k in full_text for k in [
+            "leak site", "extortion site", "proof of breach", "proof samples", "threat actor claims breach",
+            "hacker claims breach", "ransomware group claims", "listed on leak site", "added to leak site"
+        ])
+        if has_extortion:
+            evidence_score += 25
+            evidence_factors.append("Extortion Leak Site Listing / Proof Samples")
+
+        # Factor 5: Critical Infrastructure / Essential Services Impact (+30)
+        has_infra = any(k in full_text for k in [
+            "critical infrastructure", "power grid", "electric grid", "water utility",
+            "hospital infrastructure", "emergency operations", "pipeline cyberattack", "telecom network"
+        ])
+        if has_infra:
+            evidence_score += 30
+            evidence_factors.append("Critical Infrastructure / Essential Services Impact")
+
+        # Factor 6: Major Service Disruption / Operational Outage (+25)
+        has_disruption = any(k in full_text for k in [
+            "service disruption", "major service disruption", "disrupted operations",
+            "disrupting services", "network outage caused by", "systems taken offline", "operations disrupted",
+            "operations were disrupted"
+        ])
+        if has_disruption:
+            evidence_score += 25
+            evidence_factors.append("Major Operational / Service Disruption")
+
+        # Factor 7: Identified Target Organization (+20)
+        comp = art.get("target_company") or extract_breached_company(art)
+        has_victim_company = bool(comp and comp not in ("Not Specified", "Unknown", "Target Organization"))
+        if has_victim_company:
+            evidence_score += 20
+            evidence_factors.append(f"Target Organization: {comp}")
+
+        # Factor 8: Confirmed Disclosure vs Unverified Claim (+25 for confirmed, +15 for attributed claim)
+        claim_status = (art.get("claim_status") or "").lower()
+        if claim_status == "confirmed" or any(k in full_text for k in ["sec filing confirms", "company confirmed", "disclosed breach", "official statement confirms", "confirmed data breach", "confirmed corporate"]):
+            evidence_score += 25
+            evidence_factors.append("Confirmed Incident Disclosure")
+        elif claim_status == "claimed" or any(k in full_text for k in ["claims breach", "claims data", "leak site", "threat actor claims"]):
+            evidence_score += 15
+            evidence_factors.append("Attributed Actor Claim")
+
+        # Factor 9: Named Threat Actor Attribution (+20)
+        actor = extract_threat_actor(art)
+        if actor != "Unknown":
+            evidence_score += 20
+            evidence_factors.append(f"Threat Actor Identified: {actor}")
+
+        # ── Stage 4: Deterministic Alert Routing ──
+        # Minimum threshold: Score >= 50 required for Team Alert
+        is_alert = (evidence_score >= 50)
+
+        return {
+            "decision": "TEAM_ALERT" if is_alert else "WEBSITE_ONLY",
+            "score": evidence_score,
+            "factors": evidence_factors,
+            "target_company": comp if has_victim_company else "N/A"
+        }
 
 
-def is_indian_news(art: Dict[str, Any]) -> bool:
-    """
-    Matches ALL cyber news for India:
-      - CERT-In & NCIIPC advisories
-      - Indian enterprises (TCS, Infosys, SBI, AIIMS, Reliance, Paytm, Razorpay, etc.)
-      - Foreign companies operating in India
-      - India-specific cyber attacks, threat actors, vulnerabilities, and data breaches
-    """
-    if not is_cyber_news(art):
-        return False
+def is_critical_actionable_incident(art: Dict[str, Any]) -> bool:
+    """Evaluates if an article passes the explicit 4-stage Team Alert Decision Engine."""
+    eval_result = TeamAlertDecisionEngine.evaluate(art)
+    return eval_result["decision"] == "TEAM_ALERT"
 
-    country_name = art.get("target_country") or extract_country(art)
-    company_name = extract_breached_company(art)
 
-    title = art.get("title") or ""
-    summary = art.get("summary") or ""
-    source_name = (art.get("source_name") or "").lower()
-    text = f"{title} {summary} {' '.join(art.get('tags') or [])}".lower()
+def is_company_breach_or_incident(art: Dict[str, Any]) -> bool:
+    """Alias pointing to the unified critical incident evaluation engine."""
+    return is_critical_actionable_incident(art)
 
-    # Generic global vulnerability/CVE advisories without explicit Indian enterprise/gov impact are NOT Indian news
-    is_generic_vuln = any(k in text for k in ["cve-", "log4j", "zero-day", "0-day", "rce", "buffer overflow", "deserialization"])
-    has_explicit_indian_org = any(k in text for k in [
-        "tcs", "infosys", "wipro", "hcl", "sbi", "aiims", "aadhaar", "gov.in", "nic.in", "drdo", "isro",
-        "indian army", "indian navy", "indian air force", "indian government", "indian bank", "razorpay", "paytm", "jio", "airtel"
-    ])
-    if is_generic_vuln and not has_explicit_indian_org:
-        if not ("cert-in" in source_name or "cert.in" in source_name or "nciipc" in source_name):
-            return False
 
-    # Check for Indian enterprise or Foreign enterprise in India
-    has_indian_enterprise = (
-        bool(INDIAN_COMPANIES_REGEX.search(text))
-        or bool(FOREIGN_IN_INDIA_REGEX.search(text))
-        or (company_name in ["TCS", "Infosys", "Wipro", "HCLTech", "State Bank of India", "AIIMS", "Physics Wallah", "Paytm", "Razorpay", "Reliance Jio", "Airtel", "Zomato", "Flipkart"])
-    )
 
-    is_india_region = (country_name == "India") or any(
-        kw in text for kw in [
-            "india", "indian", "cert-in", "cert.in", "nciipc", "meity", "delhi", "mumbai",
-            "bengaluru", "hyderabad", "chennai", "pune", "kolkata", "digital india", "gov.in", "nic.in"
-        ]
-    )
 
-    return is_india_region or has_indian_enterprise
 
 
 def extract_threat_actor(art: Dict[str, Any]) -> str:
@@ -1491,15 +1772,10 @@ class TeamsService:
             seen_fingerprints.add(fp)
             non_duplicate_articles.append(art)
 
-        # STRICT FILTER: ONLY HIGH & CRITICAL SEVERITY NEWS
+        # STRICT FILTER: ONLY CRITICAL ACTIONABLE INCIDENTS FOR TEAM ALERTS (ORDINARY CVES/ADVISORIES KEPT ON WEBSITE ONLY)
         high_severe_articles = [
             art for art in non_duplicate_articles
-            if is_cyber_news(art) and (
-                extract_severity_level(art) in ("CRITICAL", "HIGH")
-                or str(art.get("severity", "")).upper() in ("CRITICAL", "HIGH")
-                or art.get("cves")
-                or (art.get("threat_actors") and any(a for a in art.get("threat_actors") if str(a).lower() not in ("unattributed", "unknown", "none")))
-            )
+            if is_critical_actionable_incident(art)
         ]
 
         cyber_articles = [art for art in non_duplicate_articles if is_cyber_news(art)]

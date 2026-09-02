@@ -117,6 +117,16 @@ class ArticleDB(BaseModel):
     ai_summary_model: Optional[str] = None
     ai_summary_generated_at: Optional[datetime] = None
 
+    # State Machine & Processing Pipeline
+    processing_status: str = "pending"  # pending | ingested | normalized | deduplicated | classified | ai_enriched | validated | incident_correlated | indexed | alert_evaluated | completed | failed | permanently_failed
+    ai_model: Optional[str] = None
+    prompt_version: Optional[str] = "v3.2"
+    ai_attempts: int = 0
+    ai_error: Optional[str] = None
+    incident_id: Optional[str] = None
+    teams_dispatched: bool = False
+    teams_dispatched_at: Optional[datetime] = None
+
     bookmarked_by: List[str] = []
     analyst_notes: List[AnalystNote] = []
     view_count: int = 0

@@ -3,6 +3,8 @@ Intelligence Collection Engine — Base Collector and Factory
 """
 import asyncio
 import hashlib
+import ipaddress
+import urllib.parse
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -25,6 +27,41 @@ def _get_ai_enrichment():
     return _ai_enrichment
 
 log = structlog.get_logger()
+
+
+def is_safe_public_url(url: str) -> bool:
+    """
+    Validates that a URL is a safe public HTTP/HTTPS endpoint to prevent SSRF:
+    - Protocol must be http or https
+    - Hostname must not be empty or localhost
+    - IP address must not resolve to private, loopback, multicast, link-local, or cloud metadata ranges (169.254.169.254)
+    """
+    if not url or not isinstance(url, str):
+        return False
+    
+    parsed = urllib.parse.urlparse(url.strip())
+    if parsed.scheme.lower() not in ("http", "https"):
+        return False
+        
+    hostname = parsed.hostname
+    if not hostname:
+        return False
+        
+    hostname_lower = hostname.lower()
+    if hostname_lower in ("localhost", "127.0.0.1", "::1", "metadata.google.internal") or hostname_lower.endswith((".local", ".internal", ".localhost")):
+        return False
+        
+    # Check if direct IP address
+    try:
+        ip = ipaddress.ip_address(hostname)
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
+            return False
+        if str(ip) == "169.254.169.254":
+            return False
+    except ValueError:
+        pass  # Standard public domain name
+        
+    return True
 
 # ─── Cyber Relevance Filter ───────────────────────────────────────────────────
 # Matches ANY article that is genuinely cyber/security-related.
@@ -153,7 +190,7 @@ class BaseCollector(ABC):
 
             # ── Run Cybersecurity Keyword Classifier Engine ──
             from app.services.keyword_classifier import KeywordClassifier
-            kw_classification = KeywordClassifier.classify_article(
+            kw_raw = KeywordClassifier.classify_article(
                 {
                     "title": article.title,
                     "summary": article.summary,
@@ -161,16 +198,18 @@ class BaseCollector(ABC):
                     "tags": list(set(self.config.get("tags", []) + article.tags)),
                 }
             )
+            kw_classification: Dict[str, Any] = kw_raw if isinstance(kw_raw, dict) else {}
 
             is_cyber_flag = bool(kw_classification.get("is_cybersecurity_news", False))
             if not is_cyber_flag:
                 computed_severity = "informational"
                 computed_score = 0.0
             else:
-                computed_severity = kw_classification["severity"].lower() if kw_classification["severity"] in ("Critical", "High", "Medium", "Low") else severity
-                computed_score = float(kw_classification["cyber_risk_score"])
+                kw_sev = str(kw_classification.get("severity", "")).lower()
+                computed_severity = kw_sev if kw_sev in ("critical", "high", "medium", "low") else severity
+                computed_score = float(kw_classification.get("cyber_risk_score", 0.0) or 0.0)
 
-            doc = {
+            doc: Dict[str, Any] = {
                 "source_id": self.source_id,
                 "source_name": self.source_name,
                 "source_category": self.config.get("category", "vendor"),
@@ -178,24 +217,24 @@ class BaseCollector(ABC):
                 "url": article.url,
                 "url_hash": url_hash,
                 "title_hash": title_hash,
-                "title": article.title[:500],
-                "summary": (article.summary or article.content[:500])[:1000],
-                "content_raw": article.content[:100000],  # Cap at 100k chars
-                "content_clean": article.content[:50000],
+                "title": str(article.title or "")[:500],
+                "summary": str(article.summary or article.content[:500] or "")[:1000],
+                "content_raw": str(article.content or "")[:100000],  # Cap at 100k chars
+                "content_clean": str(article.content or "")[:50000],
                 "author": article.author,
                 "published_at": article.published_at or datetime.now(timezone.utc),
                 "crawled_at": datetime.now(timezone.utc),
                 "enriched_at": None,
                 "language": "en",
-                "word_count": len((article.content or "").split()),
+                "word_count": len(str(article.content or "").split()),
                 "severity": computed_severity,
                 "severity_score": computed_score,
                 "tags": list(set(self.config.get("tags", []) + article.tags)),
                 "tlp_level": "white",
-                "threat_actors": kw_classification["threat_actors"],
-                "malware_families": kw_classification["malware"],
+                "threat_actors": list(kw_classification.get("threat_actors", []) or []),
+                "malware_families": list(kw_classification.get("malware", []) or []),
                 "campaigns": [],
-                "cves": list(set(iocs.cves + kw_classification["cves"])),
+                "cves": list(set(iocs.cves + list(kw_classification.get("cves", []) or []))),
                 "mitre_techniques": [],
                 "iocs": iocs.to_dict(),
                 "ioc_count": iocs.total_count,
@@ -204,22 +243,22 @@ class BaseCollector(ABC):
                 "ai_confidence": 0.0,
                 "is_duplicate": False,
                 # Structured Keyword Classification Fields
-                "is_cybersecurity_news": kw_classification["is_cybersecurity_news"],
-                "cyber_risk_score": kw_classification["cyber_risk_score"],
-                "attacks": kw_classification["attacks"],
-                "malware": kw_classification["malware"],
-                "vulnerabilities": kw_classification["vulnerabilities"],
-                "targets": kw_classification["targets"],
-                "geography": kw_classification["geography"],
-                "matched_keywords": kw_classification["matched_keywords"],
-                "all_matched_terms": kw_classification["all_matched_terms"],
+                "is_cybersecurity_news": bool(kw_classification.get("is_cybersecurity_news", False)),
+                "cyber_risk_score": float(kw_classification.get("cyber_risk_score", 0.0) or 0.0),
+                "attacks": list(kw_classification.get("attacks", []) or []),
+                "malware": list(kw_classification.get("malware", []) or []),
+                "vulnerabilities": list(kw_classification.get("vulnerabilities", []) or []),
+                "targets": list(kw_classification.get("targets", []) or []),
+                "geography": list(kw_classification.get("geography", []) or []),
+                "matched_keywords": list(kw_classification.get("matched_keywords", []) or []),
+                "all_matched_terms": list(kw_classification.get("all_matched_terms", []) or []),
                 # New Schema Fields
-                "claim_status": kw_classification.get("claim_status", "verified"),
+                "claim_status": str(kw_classification.get("claim_status", "verified") or "verified"),
                 "claimed_records_count": None,
-                "attack_vector": kw_classification["primary_threat"],
+                "attack_vector": kw_classification.get("primary_threat"),
                 "company_response": None,
-                "target_country": kw_classification["primary_geography"] if kw_classification["geography"] else None,
-                "sector": kw_classification["primary_target"] if kw_classification["targets"] else None,
+                "target_country": kw_classification.get("primary_geography") if kw_classification.get("geography") else None,
+                "sector": kw_classification.get("primary_target") if kw_classification.get("targets") else None,
                 "duplicate_of": None,
                 "similarity_score": None,
                 "embedding_vector": None,
@@ -391,22 +430,40 @@ class RSSCollector(BaseCollector):
 
             for entry in feed.entries[:50]:  # Max 50 per crawl
                 published_at = None
-                if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                    import time
-                    published_at = datetime.fromtimestamp(
-                        time.mktime(entry.published_parsed), tz=timezone.utc
-                    )
+                parsed_time = getattr(entry, 'published_parsed', None)
+                if parsed_time is not None:
+                    try:
+                        import time
+                        if isinstance(parsed_time, (tuple, time.struct_time)):
+                            published_at = datetime.fromtimestamp(
+                                time.mktime(parsed_time), tz=timezone.utc
+                            )
+                        elif isinstance(parsed_time, (int, float)):
+                            published_at = datetime.fromtimestamp(
+                                float(parsed_time), tz=timezone.utc
+                            )
+                        else:
+                            published_at = datetime.now(timezone.utc)
+                    except Exception:
+                        published_at = datetime.now(timezone.utc)
 
                 content = ""
                 if hasattr(entry, 'content') and entry.content:
-                    content = entry.content[0].get('value', '')
-                elif hasattr(entry, 'summary'):
-                    content = entry.summary
-                elif hasattr(entry, 'description'):
-                    content = entry.description
+                    try:
+                        if isinstance(entry.content, list) and len(entry.content) > 0:
+                            first_val = entry.content[0]
+                            content = str(first_val.get('value', '') if isinstance(first_val, dict) else first_val or '')
+                        else:
+                            content = str(entry.content or '')
+                    except Exception:
+                        content = ""
+                elif hasattr(entry, 'summary') and entry.summary:
+                    content = str(entry.summary or '')
+                elif hasattr(entry, 'description') and entry.description:
+                    content = str(entry.description or '')
 
                 # Extract clean text from HTML if needed
-                if '<' in content:
+                if content and isinstance(content, str) and '<' in content:
                     try:
                         from bs4 import BeautifulSoup
                         content = BeautifulSoup(content, 'lxml').get_text(separator=' ', strip=True)
@@ -414,24 +471,36 @@ class RSSCollector(BaseCollector):
                         pass
 
                 # Clean summary — strip HTML if present (e.g. Medium RSS)
-                raw_summary = entry.get('summary', '') or ''
-                if '<' in raw_summary:
+                raw_summary_val = ""
+                if isinstance(entry, dict) or hasattr(entry, 'get'):
+                    raw_summary_val = entry.get('summary', '') or entry.get('description', '') or ''
+                elif hasattr(entry, 'summary'):
+                    raw_summary_val = getattr(entry, 'summary', '')
+                elif hasattr(entry, 'description'):
+                    raw_summary_val = getattr(entry, 'description', '')
+                
+                raw_summary = str(raw_summary_val or '')
+                if raw_summary and '<' in raw_summary:
                     try:
                         from bs4 import BeautifulSoup as _BS
                         raw_summary = _BS(raw_summary, 'lxml').get_text(separator=' ', strip=True)
                     except Exception:
                         import re as _re
                         raw_summary = _re.sub(r'<[^>]+>', ' ', raw_summary).strip()
-                raw_summary = raw_summary[:1000]
+                raw_summary = str(raw_summary)[:1000]
+
+                entry_link = str(entry.get('link', '') if hasattr(entry, 'get') else getattr(entry, 'link', ''))
+                entry_title = str(entry.get('title', 'Untitled') if hasattr(entry, 'get') else getattr(entry, 'title', 'Untitled'))[:500]
+                entry_author = str(entry.get('author', '') if hasattr(entry, 'get') else getattr(entry, 'author', '')) or None
 
                 articles.append(RawArticle(
-                    url=entry.get('link', ''),
-                    title=entry.get('title', 'Untitled')[:500],
-                    content=content,
+                    url=entry_link,
+                    title=entry_title,
+                    content=str(content or ''),
                     summary=raw_summary,
-                    author=entry.get('author', None),
+                    author=entry_author,
                     published_at=published_at,
-                    tags=[tag.term for tag in getattr(entry, 'tags', []) if hasattr(tag, 'term')],
+                    tags=[str(tag.term) for tag in getattr(entry, 'tags', []) if hasattr(tag, 'term')],
                 ))
 
             return articles
