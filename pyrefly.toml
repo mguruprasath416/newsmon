@@ -1,4 +1,5 @@
 search-path = [
   "backend",
-  "backend/FEED/Lib/site-packages"
+  "backend/FEED/Lib/site-packages",
+  "FEED/Lib/site-packages"
 ]

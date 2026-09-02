@@ -254,7 +254,19 @@ class AlertEngine:
 
     @staticmethod
     async def _send_teams_alert(rule: Dict[str, Any], article: Dict[str, Any]) -> bool:
-        """Dispatch Microsoft Teams individual alert card."""
+        """
+        Dispatch Microsoft Teams individual alert card ONLY if article qualifies as a Critical Actionable Incident.
+        Ordinary keyword matches or advisories remain strictly Website Only.
+        """
+        from app.services.teams_service import is_critical_actionable_incident, TeamsService
+        if not is_critical_actionable_incident(article):
+            log.info(
+                "Teams dispatch suppressed: Rule matched but article is not an actionable critical incident (WEBSITE_ONLY)",
+                title=article.get("title", "")[:60],
+                rule=rule.get("name")
+            )
+            return False
+
         webhook_url = (
             rule.get("teams_webhook_url") or
             getattr(settings, "TEAMS_WEBHOOK_URL_CYBER_PULSE", "") or

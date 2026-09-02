@@ -29,39 +29,7 @@ def _get_ai_enrichment():
 log = structlog.get_logger()
 
 
-def is_safe_public_url(url: str) -> bool:
-    """
-    Validates that a URL is a safe public HTTP/HTTPS endpoint to prevent SSRF:
-    - Protocol must be http or https
-    - Hostname must not be empty or localhost
-    - IP address must not resolve to private, loopback, multicast, link-local, or cloud metadata ranges (169.254.169.254)
-    """
-    if not url or not isinstance(url, str):
-        return False
-    
-    parsed = urllib.parse.urlparse(url.strip())
-    if parsed.scheme.lower() not in ("http", "https"):
-        return False
-        
-    hostname = parsed.hostname
-    if not hostname:
-        return False
-        
-    hostname_lower = hostname.lower()
-    if hostname_lower in ("localhost", "127.0.0.1", "::1", "metadata.google.internal") or hostname_lower.endswith((".local", ".internal", ".localhost")):
-        return False
-        
-    # Check if direct IP address
-    try:
-        ip = ipaddress.ip_address(hostname)
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
-            return False
-        if str(ip) == "169.254.169.254":
-            return False
-    except ValueError:
-        pass  # Standard public domain name
-        
-    return True
+from app.core.ssrf import is_safe_public_url, safe_fetch_url
 
 # ─── Cyber Relevance Filter ───────────────────────────────────────────────────
 # Matches ANY article that is genuinely cyber/security-related.
@@ -295,6 +263,20 @@ class BaseCollector(ABC):
 
                     final_tas = sorted(list(set(existing_tas + extracted_tas)))
 
+                    from app.services.teams_service import TeamAlertDecisionEngine
+                    temp_doc = dict(doc)
+                    temp_doc.update({
+                        "claim_status": enriched.get("claim_status", "claimed"),
+                        "severity": enriched.get("severity", doc.get("severity", "medium")),
+                        "threat_actors": final_tas,
+                        "claimed_records_count": enriched.get("claimed_records_count"),
+                        "company_response": enriched.get("company_response"),
+                        "target_country": enriched.get("target_country"),
+                        "sector": enriched.get("sector"),
+                        "ai_summary": enriched.get("summary"),
+                    })
+                    decision_eval = TeamAlertDecisionEngine.evaluate(temp_doc)
+
                     enrich_update = {
                         "claim_status": enriched.get("claim_status", "claimed"),
                         "severity": enriched.get("severity", doc.get("severity", "medium")),
@@ -308,6 +290,15 @@ class BaseCollector(ABC):
                         "ai_summary": enriched.get("summary"),
                         "enriched_at": datetime.now(timezone.utc),
                         "enrichment_status": "enriched",
+                        # Provenance & Triage Audit
+                        "evidence_score": decision_eval.get("score", 0),
+                        "alert_decision": decision_eval.get("decision", "WEBSITE_ONLY"),
+                        "decision_reason": decision_eval.get("reason", "Evaluated by 4-Stage Decision Engine"),
+                        "evidence_factors": decision_eval.get("factors", []),
+                        "model_version": enriched.get("model_version", "gemini-2.5-flash"),
+                        "prompt_version": "v3.2",
+                        "policy_version": "2.0",
+                        "taxonomy_version": "2.0",
                     }
                     await col.update_one({"url_hash": url_hash}, {"$set": enrich_update})
                     doc.update(enrich_update)
@@ -316,6 +307,8 @@ class BaseCollector(ABC):
                         title=doc["title"][:60],
                         claim_status=enriched.get("claim_status"),
                         severity=enriched.get("severity"),
+                        decision=decision_eval.get("decision"),
+                        evidence_score=decision_eval.get("score"),
                         threat_actors=final_tas,
                     )
                 except Exception as enrich_err:

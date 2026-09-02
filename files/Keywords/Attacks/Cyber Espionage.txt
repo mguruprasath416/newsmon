@@ -1,12 +1,31 @@
-cyber espionage
+﻿cyber espionage
 cyber-espionage
 cyber spying
-cyber intelligence operation
+cyber intelligence
 espionage campaign
-state-sponsored espionage
-nation-state espionage
+espionage operation
+intelligence operation
+state-sponsored cyber attack
+state sponsored attack
+nation-state attack
+nation state hacker
+government-backed hacker
+government sponsored hacker
+state-backed threat actor
+cyber warfare
+cyber reconnaissance
+political espionage
+military espionage
+economic espionage
+industrial espionage
+diplomatic espionage
+intelligence gathering
+surveillance operation
 covert cyber operation
-intelligence gathering attack
-strategic cyber espionage
-intellectual property theft
-confidential data exfiltration
+APT campaign
+APT operation
+targeted espionage
+cyber intrusion
+long-term intrusion
+persistent access
+strategic espionage

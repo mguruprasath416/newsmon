@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     TEAMS_WEBHOOK_URL_MIDDLE_EAST_COMPANIES: str = ""
 
     # ── CyberPulse Viral News Engine Settings ──────────────────────────
-    CYBERPULSE_MIN_SOURCES: int = 2
+    CYBERPULSE_MIN_SOURCES: int = 5
     CYBERPULSE_HIGH_SOURCES: int = 10
     CYBERPULSE_TIME_WINDOW_HOURS: int = 72
     CYBERPULSE_SIMILARITY_THRESHOLD: float = 0.55

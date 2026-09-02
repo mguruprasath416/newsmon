@@ -59,8 +59,6 @@ def is_cyber_news(art: Dict[str, Any]) -> bool:
         return bool(_CYBER_TERMS.search(text))
 
 
-_DISPATCHED_TEAMS_KEYS: set = set()
-
 
 def _get_article_fingerprint(art: Dict[str, Any]) -> str:
     """Generate a stable deduplication key from company, title, or ID."""
@@ -73,30 +71,6 @@ def _get_article_fingerprint(art: Dict[str, Any]) -> str:
     if aid:
         return f"id:{aid}"
     return f"title:{norm_title}"
-
-
-def _is_already_dispatched(art: Dict[str, Any], webhook_url: str) -> bool:
-    if art.get("teams_dispatched") is True:
-        return True
-    fp = _get_article_fingerprint(art)
-    dispatch_key = f"{webhook_url}::{fp}"
-    return dispatch_key in _DISPATCHED_TEAMS_KEYS
-
-
-async def _mark_dispatched_in_db(art: Dict[str, Any], webhook_url: str):
-    fp = _get_article_fingerprint(art)
-    dispatch_key = f"{webhook_url}::{fp}"
-    _DISPATCHED_TEAMS_KEYS.add(dispatch_key)
-    art_id = art.get("_id")
-    if art_id:
-        try:
-            from app.db.mongodb import MongoDB
-            await MongoDB.collection("articles").update_one(
-                {"_id": art_id},
-                {"$set": {"teams_dispatched": True, "teams_dispatched_at": datetime.now(timezone.utc)}}
-            )
-        except Exception:
-            pass
 
 
 def clean_summary_text(art: Dict[str, Any]) -> str:
@@ -840,7 +814,14 @@ _ORDINARY_NEWS_EXCLUSIONS = re.compile(
     r'bug bounty|cve-\d{4}-\d+|vulnerability in|zero-day in|flaw in|bug in|'
     r'cisa adds|cisa adds two|known exploited vulnerabilities|kev catalog|'
     r'proof of concept|poc published|security researchers discover|researchers find|'
-    r'how to patch|mitigation steps|advisory released|security bulletin|release notes'
+    r'how to patch|mitigation steps|advisory released|security bulletin|release notes|'
+    r'annual report|threat report|market report|market research|annual threat report|'
+    r'survey shows|statistics show|ransomware payments surged|ransomware trends|cyber trends|'
+    r'launches new|unveils new|announces new|product feature|new module|falcon module|security tool|'
+    r'technical deep-dive|deep-dive into|reverse-engineering|reverse engineering|malware analysis report|'
+    r'deconstructs the|analysis of the new|academic paper|timing attack on|post-quantum|lattice-based|'
+    r'security awareness|awareness training|best practices for|simulated phishing|phishing awareness|'
+    r'looking back|five years after|years after the|anniversary of|historic.*compromise'
     r')\b',
     re.IGNORECASE
 )
@@ -854,7 +835,17 @@ _HYPOTHETICAL_OR_NON_INCIDENT = re.compile(
     r'hypothetical scenario|simulation|simulated breach|tabletop exercise|'
     r'penetration testing writeup|pen.?test demo|security training|awareness training|'
     r'phishing simulation|phishing test|proof of concept demonstrates how|'
-    r'vulnerability could be exploited to|flaw could allow'
+    r'vulnerability could be exploited to|flaw could allow|theoretical study'
+    r')\b',
+    re.IGNORECASE
+)
+
+_EXPLICIT_DENIAL_PATTERNS = re.compile(
+    r'\b('
+    r'denies.*breach|denies.*hack|denies.*leak|denies.*claim|disputes.*claim|'
+    r'no evidence of compromise|no evidence of intrusion|no evidence of unauthorized|'
+    r'no customer data was accessed|confirms zero unauthorized access|false claim|'
+    r'blocked the attack|unaffected by'
     r')\b',
     re.IGNORECASE
 )
@@ -864,136 +855,191 @@ class TeamAlertDecisionEngine:
     """
     Explicit 4-Stage Decision Layer for Team Alerts:
     Stage 1: Keyword Candidate Tagging (Non-Alerting)
-    Stage 2: Anti-False-Positive Protection (Hypothetical & PR Patchwork Filter)
-    Stage 3: Multi-Factor Evidence Validation Gate (Score >= 50)
-    Stage 4: Deterministic Alert Routing (TEAM_ALERT vs WEBSITE_ONLY)
+    Stage 2: Anti-False-Positive Protection (Hypothetical, Advisory, & Denial Filter)
+    Stage 3: Multi-Factor Evidence Validation Gate (Score >= 50, Target Org, Real Impact)
+    Stage 4: Deterministic Alert Routing (TEAM_ALERT vs HUMAN_REVIEW vs WEBSITE_ONLY)
     """
 
     @classmethod
     def evaluate(cls, art: Dict[str, Any]) -> Dict[str, Any]:
         if not is_cyber_news(art):
-            return {"decision": "WEBSITE_ONLY", "score": 0, "reason": "Non-cyber content"}
+            return {"decision": "WEBSITE_ONLY", "score": 0, "reason": "Non-cyber content", "factors": []}
 
         title = (art.get("title") or "").strip()
         summary = (art.get("summary") or "").strip()
-        clean_body = (art.get("content_clean") or "")[:3000]
+        clean_body = (art.get("content_clean") or "")[:4000]
         full_text = f"{title} {summary} {clean_body}".lower()
 
-        # ── Stage 2: Anti-False-Positive Protection ──
-        if _HYPOTHETICAL_OR_NON_INCIDENT.search(title) or _HYPOTHETICAL_OR_NON_INCIDENT.search(summary[:300]):
+        # ── Stage 2: Anti-False-Positive & Negative-Context Protection ──
+        if _HYPOTHETICAL_OR_NON_INCIDENT.search(title) or _HYPOTHETICAL_OR_NON_INCIDENT.search(summary[:400]):
             return {
                 "decision": "WEBSITE_ONLY",
                 "score": 0,
-                "reason": "Hypothetical, simulation, or non-incident vulnerability context"
+                "reason": "Hypothetical, simulation, or non-incident vulnerability context",
+                "factors": ["Hypothetical / Tabletop / Simulation Detected"]
             }
 
-        # Check for ordinary vulnerability / CVE / Patchwork without active victim breach
+        # Check explicit denial precedence
+        claim_status_val = (art.get("claim_status") or "").lower().strip()
+        comp_response_val = (art.get("company_response") or "").lower().strip()
+        is_denied = (
+            claim_status_val == "denied"
+            or _EXPLICIT_DENIAL_PATTERNS.search(comp_response_val)
+            or (_EXPLICIT_DENIAL_PATTERNS.search(title) and not any(k in title.lower() for k in ["confirms", "admits", "sec filing", "sec 8-k"]))
+        )
+        if is_denied:
+            return {
+                "decision": "WEBSITE_ONLY",
+                "score": 0,
+                "reason": "Organization issued explicit denial statement with zero evidence of compromise",
+                "factors": ["Explicit Denial Statement"]
+            }
+
+        # Check for ordinary vulnerability / CVE / Patchwork / Research / Stats without active victim breach
         has_victim_headline = any(k in title.lower() for k in [
             "stolen", "breached", "hits", "hit by", "hacked", "extort", "compromised",
-            "leaked", "confirms breach", "claims breach", "claims data", "data leak", "encrypted"
+            "leaked", "confirms breach", "claims breach", "claims data", "data leak", "encrypted",
+            "sec 8-k", "discloses cyber incident"
         ])
         if _ORDINARY_NEWS_EXCLUSIONS.search(title) and not has_victim_headline:
             return {
                 "decision": "WEBSITE_ONLY",
                 "score": 0,
-                "reason": "Routine vulnerability, advisory, or patch update"
+                "reason": "Routine vulnerability, advisory, research, tool release, or statistical report without active victim incident",
+                "factors": ["Ordinary News / Advisory / Research Exclusion"]
             }
 
         # ── Stage 3: Multi-Factor Evidence Validation Gate ──
         evidence_score = 0
         evidence_factors = []
 
-        # Factor 1: Data Theft & Exfiltration Evidence (+35)
-        claimed_records = extract_claimed_records(art) or art.get("claimed_records_count")
+        # Target Organization Verification (+20)
+        comp = art.get("target_company") or extract_breached_company(art)
+        has_victim_company = bool(comp and comp not in ("Not Specified", "Unknown", "Target Organization", "None", ""))
+        if has_victim_company:
+            evidence_score += 20
+            evidence_factors.append(f"Target Organization: {comp} (+20)")
+
+        # Factor 1: Confirmed Disclosure vs Unverified Claim (+25 for confirmed, +15 for attributed claim)
+        has_confirmed = (
+            claim_status_val == "confirmed"
+            or any(k in full_text for k in [
+                "sec filing confirms", "sec 8-k", "company confirmed", "disclosed breach",
+                "official statement confirms", "confirmed data breach", "confirmed corporate",
+                "disclosed today that threat actors compromised", "officials confirmed an intrusion",
+                "issued an official security notice admitting"
+            ])
+        )
+        if has_confirmed:
+            evidence_score += 25
+            evidence_factors.append("Confirmed Incident Disclosure (+25)")
+        elif claim_status_val == "claimed" or any(k in full_text for k in ["claims breach", "claims data", "leak site", "threat actor claims", "lists on dark web", "added to leak portal"]):
+            evidence_score += 15
+            evidence_factors.append("Attributed Actor Claim (+15)")
+
+        # Factor 2: Data Theft & Exfiltration Evidence (+35 for quantified, +20 for unquantified)
+        claimed_records = art.get("claimed_records_count")
+        if claimed_records is None:
+            raw_rec = extract_claimed_records(art)
+            if raw_rec and raw_rec != "Not disclosed":
+                nums = re.findall(r"\d[\d,]*", raw_rec)
+                if nums:
+                    try:
+                        claimed_records = int(nums[0].replace(",", ""))
+                    except ValueError:
+                        pass
+
         has_data_theft = bool(claimed_records) or any(k in full_text for k in [
             "records stolen", "data stolen", "stolen customer data", "stolen employee data",
             "patient records", "customer database", "database exfiltrated", "mass data exfiltration",
             "stolen credentials", "data theft", "database stolen", "exfiltrated customer", "data exfiltrated",
-            "exfiltrated"
+            "exfiltrated", "sensitive databases and published"
         ])
-        if has_data_theft:
+        if claimed_records and claimed_records > 0:
             evidence_score += 35
-            evidence_factors.append(f"Data Theft / Exfiltration (Records: {claimed_records or 'Detected'})")
+            evidence_factors.append(f"Quantified Stolen Records: {claimed_records:,} (+35)")
+        elif has_data_theft:
+            evidence_score += 20
+            evidence_factors.append("Data Theft / Exfiltration Evidence (+20)")
 
-        # Factor 2: Corporate Compromise & Unauthorized Access (+30)
+        # Factor 3: Corporate Compromise & Unauthorized Access (+30)
         has_compromise = any(k in full_text for k in [
             "corporate network compromised", "company compromised", "enterprise network compromised",
             "organization compromised", "internal systems compromised", "unauthorized access to internal",
             "unauthorized access to company", "attackers gained access", "threat actors gained access",
-            "compromised corporate", "bank compromised", "company breached", "organization breached", "was breached"
+            "compromised corporate", "bank compromised", "company breached", "organization breached", "was breached",
+            "compromised its internal corporate network", "unauthorized access to its customer management system",
+            "intrusion into the", "internal servers of"
         ])
         if has_compromise:
             evidence_score += 30
-            evidence_factors.append("Enterprise Compromise / Unauthorized Access")
+            evidence_factors.append("Enterprise Compromise / Unauthorized Access (+30)")
 
-        # Factor 3: Ransomware Deployment & Encrypted Systems (+30)
+        # Factor 4: Ransomware Deployment & Encrypted Systems (+30)
         has_ransomware = any(k in full_text for k in [
             "ransomware attack", "systems encrypted", "files encrypted", "operations disrupted by ransomware",
-            "hit by ransomware", "ransom demand", "double extortion", "ransomware outbreak", "ransomware victim"
+            "hit by ransomware", "ransom demand", "double extortion", "ransomware outbreak", "ransomware victim",
+            "deployed ransomware", "encrypted operational control systems", "systems were encrypted"
         ])
         if has_ransomware:
             evidence_score += 30
-            evidence_factors.append("Ransomware Deployment / Systems Encrypted")
+            evidence_factors.append("Ransomware Deployment / Systems Encrypted (+30)")
 
-        # Factor 4: Extortion / Leak Site Listing (+25)
+        # Factor 5: Extortion / Leak Site Listing (+25)
         has_extortion = any(k in full_text for k in [
             "leak site", "extortion site", "proof of breach", "proof samples", "threat actor claims breach",
-            "hacker claims breach", "ransomware group claims", "listed on leak site", "added to leak site"
+            "hacker claims breach", "ransomware group claims", "listed on leak site", "added to leak site",
+            "dark web leak portal", "extortion leak site"
         ])
         if has_extortion:
             evidence_score += 25
-            evidence_factors.append("Extortion Leak Site Listing / Proof Samples")
+            evidence_factors.append("Extortion Leak Site Listing / Proof Samples (+25)")
 
-        # Factor 5: Critical Infrastructure / Essential Services Impact (+30)
+        # Factor 6: Critical Infrastructure / Essential Services Impact (+30)
         has_infra = any(k in full_text for k in [
             "critical infrastructure", "power grid", "electric grid", "water utility",
-            "hospital infrastructure", "emergency operations", "pipeline cyberattack", "telecom network"
+            "hospital infrastructure", "emergency operations", "pipeline cyberattack", "telecom network",
+            "fuel pipeline", "energy systems", "pipeline network", "electronic health systems"
         ])
         if has_infra:
             evidence_score += 30
-            evidence_factors.append("Critical Infrastructure / Essential Services Impact")
+            evidence_factors.append("Critical Infrastructure / Essential Services Impact (+30)")
 
-        # Factor 6: Major Service Disruption / Operational Outage (+25)
+        # Factor 7: Major Service Disruption / Operational Outage (+25)
         has_disruption = any(k in full_text for k in [
             "service disruption", "major service disruption", "disrupted operations",
             "disrupting services", "network outage caused by", "systems taken offline", "operations disrupted",
-            "operations were disrupted"
+            "operations were disrupted", "forced an emergency shutdown", "halting aircraft component",
+            "halting manufacturing", "crippled"
         ])
         if has_disruption:
             evidence_score += 25
-            evidence_factors.append("Major Operational / Service Disruption")
+            evidence_factors.append("Major Operational / Service Disruption (+25)")
 
-        # Factor 7: Identified Target Organization (+20)
-        comp = art.get("target_company") or extract_breached_company(art)
-        has_victim_company = bool(comp and comp not in ("Not Specified", "Unknown", "Target Organization"))
-        if has_victim_company:
-            evidence_score += 20
-            evidence_factors.append(f"Target Organization: {comp}")
-
-        # Factor 8: Confirmed Disclosure vs Unverified Claim (+25 for confirmed, +15 for attributed claim)
-        claim_status = (art.get("claim_status") or "").lower()
-        if claim_status == "confirmed" or any(k in full_text for k in ["sec filing confirms", "company confirmed", "disclosed breach", "official statement confirms", "confirmed data breach", "confirmed corporate"]):
-            evidence_score += 25
-            evidence_factors.append("Confirmed Incident Disclosure")
-        elif claim_status == "claimed" or any(k in full_text for k in ["claims breach", "claims data", "leak site", "threat actor claims"]):
-            evidence_score += 15
-            evidence_factors.append("Attributed Actor Claim")
-
-        # Factor 9: Named Threat Actor Attribution (+20)
+        # Factor 8: Named Threat Actor Attribution (+20)
         actor = extract_threat_actor(art)
-        if actor != "Unknown":
+        if actor and actor.lower() not in ("unknown", "unattributed", "none", "n/a"):
             evidence_score += 20
-            evidence_factors.append(f"Threat Actor Identified: {actor}")
+            evidence_factors.append(f"Threat Actor Identified: {actor} (+20)")
 
         # ── Stage 4: Deterministic Alert Routing ──
-        # Minimum threshold: Score >= 50 required for Team Alert
-        is_alert = (evidence_score >= 50)
+        # Threshold: Score >= 50 AND identified target organization required for Team Alert
+        if evidence_score >= 50 and has_victim_company:
+            decision = "TEAM_ALERT"
+            reason = f"Qualifying critical actionable incident (Evidence Score: {evidence_score})"
+        elif evidence_score >= 35:
+            decision = "HUMAN_REVIEW"
+            reason = f"Borderline incident requiring analyst review (Evidence Score: {evidence_score})"
+        else:
+            decision = "WEBSITE_ONLY"
+            reason = f"Evidence score {evidence_score} below Team Alert threshold (50 pts)"
 
         return {
-            "decision": "TEAM_ALERT" if is_alert else "WEBSITE_ONLY",
+            "decision": decision,
             "score": evidence_score,
             "factors": evidence_factors,
-            "target_company": comp if has_victim_company else "N/A"
+            "target_company": comp if has_victim_company else "N/A",
+            "reason": reason
         }
 
 
@@ -1584,30 +1630,21 @@ def _apply_source_diversity_cap(
 
 def _prioritize_company_breaches(
     articles: List[Dict[str, Any]],
-    max_company_slots: int = _MAX_COMPANY_SLOTS,
-    max_advisory_slots: int = _MAX_ADVISORY_SLOTS,
+    max_slots: int = _MAX_DISPATCH_SLOTS,
 ) -> List[Dict[str, Any]]:
     """
-    Company-specific breach / ransomware / extortion articles are placed first
-    (critical for India & Middle East channels per business requirement).
-    General advisories, CERT bulletins, and CVE news fill the remaining slots.
-
-    Within each bucket the best+immediate ordering from _sort_best_and_immediate is preserved.
+    Company-specific breach / ransomware / extortion articles passing the 4-Stage Decision Gate.
+    General advisories and non-incident articles are strictly excluded from Teams dispatch.
     """
-    company_breaches = [art for art in articles if is_company_breach_or_incident(art)]
-    general_advisories = [art for art in articles if not is_company_breach_or_incident(art)]
-    return company_breaches[:max_company_slots] + general_advisories[:max_advisory_slots]
+    company_breaches = [art for art in articles if is_critical_actionable_incident(art)]
+    return company_breaches[:max_slots]
 
 
 def build_single_article_card(art: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Selects card layout based on article nature:
-    - Company Breach / Incident -> build_threat_intelligence_breach_card (Template 1)
-    - General Advisory / CVE / News -> build_general_advisory_card (Template 2)
+    Build standard high-impact Teams incident card (Template 1).
     """
-    if is_company_breach_or_incident(art):
-        return build_threat_intelligence_breach_card(art)
-    return build_general_advisory_card(art)
+    return build_threat_intelligence_breach_card(art)
 
 
 class TeamsService:
@@ -1620,8 +1657,8 @@ class TeamsService:
 
     @staticmethod
     def build_regular_card(art: Dict[str, Any]) -> Dict[str, Any]:
-        """Template 2: Cyber News Advisory Card."""
-        return build_general_advisory_card(art)
+        """Template 1: High Severity Actionable Alert Card."""
+        return build_threat_intelligence_breach_card(art)
 
     @staticmethod
     def build_cyberpulse_high_priority_card(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -1630,7 +1667,7 @@ class TeamsService:
 
     @staticmethod
     def build_high_severity_article_card(art: Dict[str, Any]) -> Dict[str, Any]:
-        """Build single article card (Template 1 or 2 based on incident type)."""
+        """Build single article card (Template 1 based on verified incident)."""
         return build_single_article_card(art)
 
     @staticmethod
@@ -1666,7 +1703,7 @@ class TeamsService:
     @staticmethod
     async def send_company_breaches(webhook_url: str, articles: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
-        Send ONLY verified High/Critical Severity alerts to MS Teams with the official Template 1.
+        Send ONLY verified High/Critical Severity Team Alerts passing the 4-Stage Decision Gate.
         """
         if not webhook_url:
             return {"sent": 0, "message": "No articles or missing webhook"}
@@ -1674,7 +1711,7 @@ class TeamsService:
         sent_count = 0
         dispatched_details = []
 
-        # STRICT FILTER: ONLY HIGH & CRITICAL SEVERITY NEWS PUBLISHED WITHIN LAST 24 HOURS (TODAY)
+        # STRICT FILTER: ONLY ARTICLES PASSING TEAM_ALERT 4-STAGE GATE
         cutoff_24h = datetime.now(timezone.utc) - timedelta(hours=24)
 
         def _is_strictly_today(a):
@@ -1692,11 +1729,11 @@ class TeamsService:
 
         high_severe_breaches = [
             art for art in articles
-            if is_cyber_news(art) and extract_severity_level(art) in ("CRITICAL", "HIGH") and _is_strictly_today(art)
+            if is_critical_actionable_incident(art) and _is_strictly_today(art)
         ]
 
         if not high_severe_breaches:
-            return {"status": "success", "sent": 0, "message": "No fresh high/severe articles published in the last 24 hours."}
+            return {"status": "success", "sent": 0, "message": "No qualifying critical actionable incidents to dispatch."}
 
         async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
             for art in high_severe_breaches:

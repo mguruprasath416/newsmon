@@ -180,6 +180,7 @@ class AIEnrichmentService:
 
         raw_content = response.choices[0].message.content.strip()
         parsed = json.loads(raw_content)
+        parsed["model_version"] = settings.OPENAI_MODEL
         cls._validate_and_sanitize(parsed)
         return parsed
 
@@ -230,6 +231,7 @@ class AIEnrichmentService:
         raw_content = re.sub(r"\s*```$", "", raw_content, flags=re.MULTILINE).strip()
 
         parsed = json.loads(raw_content)
+        parsed["model_version"] = model
         cls._validate_and_sanitize(parsed)
         return parsed
 
@@ -282,6 +284,7 @@ class AIEnrichmentService:
         raw_content = raw_content.strip()
 
         parsed = json.loads(raw_content)
+        parsed["model_version"] = settings.NVIDIA_CHAT_MODEL
         cls._validate_and_sanitize(parsed)
         return parsed
 
@@ -388,6 +391,7 @@ class AIEnrichmentService:
             "company_response": company_response,
             "cves": cves,
             "summary": summary,
+            "model_version": "heuristic-v2",
         }
         cls._validate_and_sanitize(result)
         return result
@@ -409,7 +413,11 @@ class AIEnrichmentService:
 
         # Contradiction Detection: Check if company response indicates denial
         comp_resp = str(data.get("company_response") or "").lower()
-        if any(d in comp_resp for d in ["denied", "no breach", "no evidence of compromise", "blocked the attack"]):
+        if any(d in comp_resp for d in [
+            "denied", "no breach", "no evidence of compromise", "no evidence of breach",
+            "no evidence of intrusion", "no evidence of unauthorized", "zero unauthorized",
+            "blocked the attack", "false claim", "disputes claim", "disputes the claim"
+        ]):
             data["claim_status"] = "denied"
 
         # 2. severity validation
@@ -463,7 +471,7 @@ class AIEnrichmentService:
                 if re.match(r"^CVE-\d{4}-\d{4,7}$", str(c).strip(), re.IGNORECASE)
             ]))
 
-        # 7. claimed_records_count — integer record volume only (never GB/TB data size)
+        # 7. claimed_records_count — integer record volume only (never GB/TB data size, must be > 0)
         rcount = data.get("claimed_records_count")
         if rcount is not None:
             try:
@@ -471,7 +479,8 @@ class AIEnrichmentService:
                 if isinstance(rcount, str) and re.search(r"\b(gb|tb|mb|bytes)\b", rcount, re.IGNORECASE):
                     data["claimed_records_count"] = None
                 else:
-                    data["claimed_records_count"] = int(str(rcount).replace(",", "").strip())
+                    parsed_val = int(str(rcount).replace(",", "").strip())
+                    data["claimed_records_count"] = parsed_val if parsed_val > 0 else None
             except (TypeError, ValueError):
                 data["claimed_records_count"] = None
 
@@ -587,16 +596,17 @@ class SourceReliabilityEngine:
         else:
             confidence = "low"
 
-        # 6. Company Response Conceptual Status
+        # 6. Company Response Conceptual Status (Denial checked FIRST)
         comp_resp = str(article.get("company_response") or "").lower()
         company_response_status = "no_response"
-        if any(k in comp_resp for k in ["confirmed", "identified unauthorized access", "notified authorities"]):
-            company_response_status = "confirmed"
-        elif any(k in comp_resp for k in [
+        if any(k in comp_resp for k in [
             "denied", "no evidence of compromise", "no evidence of breach", "no evidence of intrusion",
-            "no evidence of unauthorized", "disputes the claim", "blocked the attack", "false claim"
+            "no evidence of unauthorized", "zero unauthorized", "disputes the claim", "disputes claim",
+            "blocked the attack", "false claim"
         ]):
             company_response_status = "denied"
+        elif any(k in comp_resp for k in ["confirmed", "identified unauthorized access", "notified authorities"]):
+            company_response_status = "confirmed"
         elif any(k in comp_resp for k in ["investigating", "working with forensic experts"]):
             company_response_status = "investigating"
         elif any(k in comp_resp for k in ["limited number of systems", "partially"]):

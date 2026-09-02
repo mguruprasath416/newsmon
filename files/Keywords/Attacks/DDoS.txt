@@ -1,24 +1,33 @@
-DDoS
+﻿DDoS
 DDoS attack
 distributed denial of service
-distributed denial-of-service
-denial of service attack
+denial of service
 DoS attack
-Layer 7 DDoS
+distributed denial-of-service
+network flood
+traffic flood
+application layer attack
+application-layer attack
+Layer 7 attack
 L7 DDoS
 volumetric attack
+protocol attack
 HTTP flood
 HTTPS flood
 UDP flood
-TCP SYN flood
+TCP flood
 SYN flood
 ACK flood
 DNS amplification
 NTP amplification
 UDP amplification
 ICMP flood
-DNS flood attack
+DNS flood
 slowloris
+service disruption
+network disruption
+website outage
+server overload
 botnet DDoS
 DDoS campaign
 DDoS-for-hire
