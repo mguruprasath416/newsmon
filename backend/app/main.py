@@ -117,13 +117,61 @@ def create_app() -> FastAPI:
     # ── Routers ───────────────────────────────────────────────────────
     app.include_router(api_router, prefix="/api/v1")
 
-    # ── Health Check ──────────────────────────────────────────────────
+    # ── Health & Readiness Probes ─────────────────────────────────────
     @app.get("/health", tags=["health"])
     async def health():
         return {
             "status": "healthy",
+            "service": "NewsMon CTI API",
             "version": settings.APP_VERSION,
             "environment": settings.ENVIRONMENT,
+        }
+
+    @app.get("/health/detailed", tags=["health"])
+    @app.get("/api/v1/health", tags=["health"])
+    async def detailed_health():
+        # Check MongoDB
+        mongo_status = "unavailable"
+        try:
+            if MongoDB.client:
+                await MongoDB.client.admin.command("ping")
+                mongo_status = "healthy"
+        except Exception as e:
+            mongo_status = f"error: {str(e)}"
+
+        # Check Redis
+        redis_status = "unavailable"
+        try:
+            if RedisClient._client:
+                pong = await RedisClient._client.ping()
+                if pong:
+                    redis_status = "healthy"
+        except Exception as e:
+            redis_status = f"error: {str(e)}"
+
+        # Check Elasticsearch
+        es_status = "unavailable"
+        try:
+            es_c = getattr(ElasticsearchClient, "client", None)
+            if es_c:
+                info = await es_c.info()
+                if info:
+                    es_status = "healthy"
+        except Exception as e:
+            es_status = f"error: {str(e)}"
+
+        overall_status = "healthy" if mongo_status == "healthy" else "degraded"
+
+        return {
+            "status": overall_status,
+            "service": "NewsMon / ClarityTI Enterprise",
+            "version": settings.APP_VERSION,
+            "components": {
+                "mongodb": mongo_status,
+                "redis": redis_status,
+                "elasticsearch": es_status,
+                "ai_engine": "configured" if bool(settings.GEMINI_API_KEY or settings.NVIDIA_API_KEY) else "unconfigured",
+            }
         }
 
     return app
