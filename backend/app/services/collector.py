@@ -428,12 +428,20 @@ class RSSCollector(BaseCollector):
 
             for entry in feed.entries[:50]:  # Max 50 per crawl
                 published_at = None
-                if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                    import time
+                parsed_time = getattr(entry, 'published_parsed', None)
+                if parsed_time is not None:
                     try:
-                        published_at = datetime.fromtimestamp(
-                            time.mktime(entry.published_parsed), tz=timezone.utc
-                        )
+                        import time
+                        if isinstance(parsed_time, (tuple, time.struct_time)):
+                            published_at = datetime.fromtimestamp(
+                                time.mktime(parsed_time), tz=timezone.utc
+                            )
+                        elif isinstance(parsed_time, (int, float)):
+                            published_at = datetime.fromtimestamp(
+                                float(parsed_time), tz=timezone.utc
+                            )
+                        else:
+                            published_at = datetime.now(timezone.utc)
                     except Exception:
                         published_at = datetime.now(timezone.utc)
 
