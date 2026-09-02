@@ -382,51 +382,104 @@ class AIEnrichmentService:
         return result
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Schema Validation
+    # 19-Point Schema & Cross-Field Consistency Validation Engine
     # ─────────────────────────────────────────────────────────────────────────
 
     @classmethod
     def _validate_and_sanitize(cls, data: Dict[str, Any]):
-        """Ensure every field strictly conforms to the schema contract."""
-        # claim_status
-        if data.get("claim_status") not in ("claimed", "confirmed", "denied"):
+        """Ensure every field strictly conforms to the 19-point CTI validation contract."""
+        
+        # 1. claim_status validation
+        status = str(data.get("claim_status") or "").lower().strip()
+        if status not in ("claimed", "confirmed", "denied"):
             data["claim_status"] = "claimed"
+        else:
+            data["claim_status"] = status
 
-        # severity
-        if data.get("severity") not in ("critical", "high", "medium", "low", "informational"):
+        # Contradiction Detection: Check if company response indicates denial
+        comp_resp = str(data.get("company_response") or "").lower()
+        if any(d in comp_resp for d in ["denied", "no breach", "no evidence of compromise", "blocked the attack"]):
+            data["claim_status"] = "denied"
+
+        # 2. severity validation
+        sev = str(data.get("severity") or "").lower().strip()
+        if sev not in ("critical", "high", "medium", "low", "informational"):
             data["severity"] = "medium"
+        else:
+            data["severity"] = sev
 
-        # threat_actor — never null/empty
-        if not data.get("threat_actor") or str(data.get("threat_actor")).lower() in ("null", "none", "unknown", ""):
+        # 3. threat_actor — never null/empty/generic
+        actor = str(data.get("threat_actor") or "").strip()
+        if not actor or actor.lower() in (
+            "null", "none", "unknown", "unattributed", "",
+            "hackers", "threat actors", "ransomware group", "cybercriminals", "attackers"
+        ):
             data["threat_actor"] = "Unattributed"
+        else:
+            data["threat_actor"] = actor
 
-        # target_country — null is OK, but not empty string
-        if data.get("target_country") == "":
+        # 4. target_country — null is OK, not empty string
+        country = data.get("target_country")
+        if country and str(country).lower() not in ("null", "none", "unknown", ""):
+            data["target_country"] = str(country).strip()
+        else:
             data["target_country"] = None
 
-        # sector — must be one of the allowed values or null
-        allowed_sectors = {"IT", "Banking & Finance", "Healthcare", "Manufacturing", "Energy"}
-        if data.get("sector") not in allowed_sectors:
-            data["sector"] = None
+        # 5. sector — expanded enterprise allowlist
+        allowed_sectors = {
+            "IT", "Technology", "Banking", "Banking & Finance", "Healthcare",
+            "Manufacturing", "Energy", "Telecommunications", "Government", "Education", "Retail"
+        }
+        sec = data.get("sector")
+        if sec in allowed_sectors:
+            data["sector"] = sec
+        else:
+            # Check normalized match
+            matched_sec = None
+            if sec:
+                for allowed in allowed_sectors:
+                    if allowed.lower() in str(sec).lower():
+                        matched_sec = allowed
+                        break
+            data["sector"] = matched_sec
 
-        # cves — must be a list
+        # 6. cves — must be valid CVE-YYYY-NNNNN strings only
         if not isinstance(data.get("cves"), list):
             data["cves"] = []
         else:
-            # Normalize format
-            data["cves"] = [
+            data["cves"] = list(set([
                 c.upper() for c in data["cves"]
-                if re.match(r"CVE-\d{4}-\d{4,7}", str(c), re.IGNORECASE)
-            ]
+                if re.match(r"^CVE-\d{4}-\d{4,7}$", str(c).strip(), re.IGNORECASE)
+            ]))
 
-        # claimed_records_count — must be int or null
+        # 7. claimed_records_count — integer record volume only (never GB/TB data size)
         rcount = data.get("claimed_records_count")
         if rcount is not None:
             try:
-                data["claimed_records_count"] = int(rcount)
+                # If string contains GB/TB/MB, it is data volume, not record count
+                if isinstance(rcount, str) and re.search(r"\b(gb|tb|mb|bytes)\b", rcount, re.IGNORECASE):
+                    data["claimed_records_count"] = None
+                else:
+                    data["claimed_records_count"] = int(str(rcount).replace(",", "").strip())
             except (TypeError, ValueError):
                 data["claimed_records_count"] = None
 
-        # summary — must be a non-empty string
+        # 8. attack_vector — clean string or null
+        vec = data.get("attack_vector")
+        if vec and str(vec).lower() not in ("null", "none", "unknown", "not disclosed", ""):
+            data["attack_vector"] = str(vec).strip()
+        else:
+            data["attack_vector"] = None
+
+        # 9. company_response — clean string or null
+        c_resp = data.get("company_response")
+        if c_resp and str(c_resp).lower() not in ("null", "none", "no statement yet", ""):
+            data["company_response"] = str(c_resp).strip()
+        else:
+            data["company_response"] = None
+
+        # 10. summary — neutral 2-3 sentence overview
         if not data.get("summary") or not str(data.get("summary")).strip():
             data["summary"] = "No summary available."
+        else:
+            data["summary"] = str(data.get("summary")).strip()

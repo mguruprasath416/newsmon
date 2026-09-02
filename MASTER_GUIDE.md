@@ -385,3 +385,34 @@ Do not include model branding.
 Never hallucinate threat actors, victim organizations, record counts, attack vectors, company responses, CVEs, countries, sectors, or breach confirmations. If unknown, use null, "Unattributed", or [].
 ```
 
+---
+
+## 11. AI Enrichment Accuracy & Validation Framework
+
+Enforces the 19-point validation hierarchy across all incoming threat intelligence:
+
+### 1. Source-First Principle
+- All extractions must be directly grounded in the source text. No speculative inference of missing parameters.
+
+### 2. Claim vs. Confirmation Separation
+- Verbs such as *"claims"*, *"alleges"*, *"reportedly"* strictly produce `claim_status = "claimed"`.
+- Official statements (e.g. SEC 8-K filings, corporate disclosures) produce `claim_status = "confirmed"`.
+- Explicit investigations without admission remain `claim_status = "claimed"`.
+
+### 3. Record Count vs. Data Volume Guard
+- Only explicit integer quantities are extracted into `claimed_records_count`.
+- File sizes (e.g., `700 GB`, `2 TB`) and percentages strictly remain `claimed_records_count = null`.
+
+### 4. Cross-Field Consistency Enforcement (Rules A–G)
+- **Rule A:** `incident_type = vulnerability` $\rightarrow$ `team_alert = false` (unless separate active compromise exists).
+- **Rule B:** `claimed_records_count != null` $\rightarrow$ must be an explicitly cited record quantity.
+- **Rule C:** `claim_status = confirmed` $\rightarrow$ requires official confirmation evidence.
+- **Rule D:** `claim_status = denied` $\rightarrow$ requires explicit company denial statement.
+- **Rule E:** `threat_actor` $\rightarrow$ `"Unattributed"` when no named actor is explicitly stated.
+- **Rule F:** `cves` $\rightarrow$ `[]` when no explicit CVE ID is cited.
+- **Rule G:** `team_alert = true` $\rightarrow$ requires $\ge 50$ points on the Multi-Factor Evidence Validation Gate.
+
+### 5. Final Extraction & Validation Hierarchy
+$$\text{SOURCE} \rightarrow \text{FACTS} \rightarrow \text{EVIDENCE} \rightarrow \text{CLAIM STATUS} \rightarrow \text{CTI EXTRACTION} \rightarrow \text{SEVERITY} \rightarrow \text{INCIDENT CLASSIFICATION} \rightarrow \text{TEAM ALERT DECISION} \rightarrow \text{🔎 AI INSIGHT}$$
+
+
