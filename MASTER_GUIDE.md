@@ -33,7 +33,7 @@
 
 **NewsMon (ClarityTI)** is an enterprise real-time Cyber Threat Intelligence (CTI) harvesting, enrichment, correlation, and alerting platform. It aggregates intelligence across **72+ global sources**, eliminating visibility gaps and analyst alert fatigue.
 
-```
+```text
                                   ┌────────────────────────┐
                                   │   72+ GLOBAL SOURCES   │
                                   │ (CERTs, RSS, KEV, OSINT)│
@@ -97,6 +97,7 @@ The platform maintains a strict separation of concerns between cataloged researc
 | **Multi-factor evidence gate** | 🟢 **Hardened** | Multi-factor evidence scoring ($\ge 50$ pts) requiring target org, data theft, or active impact. |
 | **Tri-state decision layer** | 🟢 **Hardened** | Deterministic 3-state output: `WEBSITE_ONLY`, `HUMAN_REVIEW`, `TEAM_ALERT`. |
 | **CyberPulse non-bypass gate** | 🟢 **Hardened** | 10+ sources triggers `high_heat`, but Teams dispatch still strictly requires critical incident criteria. |
+| **Zero-day logic** | 🟢 **Hardened** | Vulnerabilities/CVEs stay on Website; only confirmed corporate exploitation reaches Teams. |
 | **SSRF security module** | 🟢 **Hardened** | Pre-flight DNS validation, private IP/cloud metadata blocking (`169.254.169.254`), redirect validation. |
 | **Incident deduplication** | 🟢 **Hardened** | 72-hour incident fingerprinting suppresses multi-source duplicate alerts. |
 
@@ -168,7 +169,7 @@ Every ingested document in MongoDB records complete auditability metadata:
 
 Located in `files/Keywords/`, the taxonomy is compiled into unified, high-speed regex patterns:
 
-```
+```text
 files/Keywords/
 ├── Critical_Alerts/          # 8 Incident Decision Files
 │   ├── Data_Breach.txt
@@ -220,7 +221,7 @@ Gemini extracts 10 structured CTI parameters in valid JSON format:
 - **`#middle-east-companies`:** GCC & Middle East corporate incidents and regional CERT alerts.
 
 ### Card Format Specification
-```
+```text
 📰 CYBER INCIDENT ALERT                               [DATE]
 [Incident Headline]
 ────────────────────────────────────────────────────────────
