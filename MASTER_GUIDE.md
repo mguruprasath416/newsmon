@@ -17,6 +17,14 @@
 8. [Database Schemas, Microservices & Container Architecture](#8-database-schemas-microservices--container-architecture)
 9. [Future Research & Engineering Development Roadmap](#9-future-research--engineering-development-roadmap)
 10. [Master System Prompt (Universal CTI Agent Prompt)](#10-master-system-prompt-universal-cti-agent-prompt)
+11. [AI Enrichment Accuracy & Validation Framework (19-Point Consistency)](#11-ai-enrichment-accuracy--validation-framework)
+12. [End-to-End Team Alert Quality, Deduplication & Routing Framework](#12-end-to-end-team-alert-quality-deduplication--routing-framework)
+13. [Source Reliability, Evidence Scoring & Claim Verification Framework](#13-source-reliability-evidence-scoring--claim-verification-framework)
+14. [RAG, Semantic Search & CyberPulse Incident Graph Framework](#14-rag-semantic-search--cyberpulse-incident-graph-framework)
+15. [Production Architecture, Microservices & Database Audit Specification](#15-production-architecture-microservices--database-audit-specification)
+16. [Platform Security, AI Security & Zero-Trust Architecture Audit](#16-platform-security-ai-security--zero-trust-architecture-audit)
+17. [CI/CD, Automated Testing & CTI Quality Assurance Architecture](#17-cicd-automated-testing--cti-quality-assurance-architecture)
+18. [Production Operations, Observability, SRE & Disaster Recovery Framework](#18-production-operations-observability-sre--disaster-recovery-framework)
 
 ---
 
