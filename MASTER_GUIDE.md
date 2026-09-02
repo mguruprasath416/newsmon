@@ -492,6 +492,31 @@ Evaluates relationship between intelligence reports:
 $$\text{ARTICLE} \rightarrow \text{ENTITIES} \rightarrow \text{HYBRID SEARCH} \rightarrow \text{RERANKING} \rightarrow \text{CORRELATION} \rightarrow \text{CYBERPULSE CLUSTER} \rightarrow \text{TIMELINE} \rightarrow \text{RAG GRAPH}$$
 > **"Semantic similarity suggests a relationship; entities, time, technical details, and evidence determine whether that relationship is real."**
 
+---
+
+## 15. Production Architecture, Microservices & Database Audit Specification
+
+Enforces enterprise-grade fault tolerance, idempotency, and asynchronous state management across the distributed CTI platform:
+
+### 1. Service Boundaries & Decoupling
+- **FastAPI (API Gateway & Query Service):** Exclusively serves synchronous client requests, analyst graph search, authentication, and monitoring endpoints. Never blocks on long-running AI or crawler tasks.
+- **Celery 5.4 + Redis 7.4 (Distributed Task Broker):** Orchestrates asynchronous feed polling, AI enrichment queues, batch vectorization, and periodic maintenance sweeps.
+- **MongoDB 7.0 (Authoritative Document Store):** Maintains structured models with compound indexes for `articles`, `incidents`, `evidence`, `threat_actors`, and `alert_dispatches`.
+- **Elasticsearch 8.16 (Search & RAG Index):** Provides full-text BM25 and dense vector search. Automatically synchronizes from MongoDB with retry queues on network interruption.
+
+### 2. Explicit Article State Machine
+$$\text{INGESTED} \rightarrow \text{NORMALIZED} \rightarrow \text{DEDUPLICATED} \rightarrow \text{CLASSIFIED} \rightarrow \text{AI\_ENRICHED} \rightarrow \text{VALIDATED} \rightarrow \text{INCIDENT\_CORRELATED} \rightarrow \text{INDEXED} \rightarrow \text{ALERT\_EVALUATED} \rightarrow \text{DISPATCHED / WEBSITE\_ONLY}$$
+
+### 3. Fault Tolerance & Dead-Letter Isolation
+- **Component Isolation:** If an external AI provider (Gemini / NVIDIA NIM) encounters transient rate limits, the ingestion pipeline remains uninterrupted and flags articles as `processing_status = "retrying"`.
+- **Idempotent Dispatch Keys:** Teams notifications are protected against duplicates across worker retries using `f"{webhook_url}::{incident_fingerprint}"`.
+- **Alert Audit Trail:** Every dispatched card writes an `AlertDispatchDB` record logging the exact timestamp, channel, fingerprint, version, and reason.
+
+### 4. Production Pipeline Flow
+$$\text{SOURCE} \rightarrow \text{INGESTION} \rightarrow \text{DEDUPLICATION} \rightarrow \text{KEYWORD CANDIDATES} \rightarrow \text{AI ENRICHMENT} \rightarrow \text{EVIDENCE GATE} \rightarrow \text{INCIDENT REGISTRY} \rightarrow \text{CYBERPULSE} \rightarrow \text{ROUTER} \rightarrow \text{TEAMS}$$
+> **"An event-driven, fault-tolerant intelligence pipeline where every alert is traceable, explainable, and idempotent."**
+
+
 
 
 
