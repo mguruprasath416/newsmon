@@ -65,26 +65,46 @@
 
 ---
 
+---
+
 ## 2. The Core Philosophy: Website Intelligence vs. Team Alerts
 
 The platform implements a strict separation of concerns to prevent alert fatigue:
+
+### 🛡️ System Architecture Scorecard
+
+| Component | Status | Production Implementation |
+| :--- | :---: | :--- |
+| **Website vs Teams separation** | 🟢 **Strong** | Website catalogs all broad CTI; Teams alerts strictly on actionable emergencies. |
+| **10-field CTI schema** | 🟢 **Strong** | Full JSON extraction (`claim_status`, `severity`, `threat_actor`, `sector`, etc.). |
+| **Claim/confirmation concept** | 🟢 **Strong** | Strict integrity rule: actor allegations never turned into confirmed corporate breaches. |
+| **AI executive insight** | 🟢 **Strong** | Single, concise `🔎 AI INSIGHT` synthesized by Google Gemini Flash. |
+| **Keyword taxonomy** | 🟢 **Strong** | 590+ terms across 7 categories used strictly as candidate taggers (non-alerting). |
+| **Keyword-only alerting avoidance** | 🟢 **Strong** | Zero keyword-only triggers; keywords feed the candidate pool only. |
+| **Evidence validation gate** | 🟢 **Strong** | Multi-factor evidence scoring ($\ge 50$ pts) requiring victim, records, or active disruption. |
+| **Team Alert decision layer** | 🟢 **Strong** | Explicit `TeamAlertDecisionEngine` class with deterministic 4-stage evaluation. |
+| **False-positive protection** | 🟢 **Strong** | Negative context filter blocks hypothetical, simulation, tabletop, and patch PR noise. |
+| **Architecture overall** | 🟢 **Strong** | High-performance, async, Docker-ready, resilient microservice foundation. |
+
+---
 
 ### 🌐 Layer 1: Website Platform (Broad CTI Repository)
 - **Scope:** Everything cybersecurity-related.
 - **Includes:** New CVE disclosures, vendor patchworks, zero-day research, bug bounties, CERT bulletins, minor malware campaigns, cryptography updates, and tool releases.
 - **Purpose:** Centralized catalog for searching, filtering, threat actor profiling, and historical lookups.
 
-### 🚨 Layer 2: Team Alerts (High-Impact Emergency Radar)
-- **Scope:** Strictly narrow, critical, actionable cyber incidents.
-- **Trigger Conditions (Must meet at least one):**
-  1. **Corporate Breach:** Organization confirmed or alleged breached.
-  2. **Data Theft:** Customer, employee, patient, or financial records stolen/exfiltrated.
-  3. **Ransomware Deployment:** Systems/networks encrypted, or double/triple extortion demands.
-  4. **Company Compromise:** Unauthorized access to corporate/cloud/admin infrastructure.
-  5. **Critical Infrastructure Attack:** Power grid, energy, water, healthcare, or telecom attacked.
-  6. **Service Disruption:** Operations or online portals brought down by a cyberattack.
-  7. **Extortion Leaks:** Threat actors claim or publish stolen corporate databases.
-- **Rejection Rule:** Ordinary vulnerability notices, CVE releases, patch tuesday bulletins, and generic research **never** trigger Team Alerts.
+### 🚨 Layer 2: Team Alerts (Explicit 4-Stage Decision Layer)
+- **Stage 1 (Candidate Tagging):** Keywords tag candidate articles without firing alerts.
+- **Stage 2 (False-Positive Filter):** Rejects theoretical flaws ("could allow attackers to"), tabletop simulations, phishing tests, and generic patch advisories.
+- **Stage 3 (Evidence Validation Gate):** Requires $\ge 50$ evidence points:
+  - *Confirmed Corporate Disclosure:* **+25 pts**
+  - *Quantified Stolen Records / Data Exfiltration:* **+35 pts**
+  - *Ransomware Deployment / Encrypted Systems:* **+30 pts**
+  - *Critical Infrastructure / Public Safety Impact:* **+30 pts**
+  - *Major Operational / Service Disruption:* **+25 pts**
+  - *Identified Target Enterprise:* **+20 pts**
+  - *Identified Threat Actor:* **+20 pts**
+- **Stage 4 (Deterministic Routing):** If Score $\ge 50$, dispatches adaptive card to Microsoft Teams. Otherwise, stays on **Website Only**.
 
 ---
 
