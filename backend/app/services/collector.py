@@ -162,6 +162,14 @@ class BaseCollector(ABC):
                 }
             )
 
+            is_cyber_flag = bool(kw_classification.get("is_cybersecurity_news", False))
+            if not is_cyber_flag:
+                computed_severity = "informational"
+                computed_score = 0.0
+            else:
+                computed_severity = kw_classification["severity"].lower() if kw_classification["severity"] in ("Critical", "High", "Medium", "Low") else severity
+                computed_score = float(kw_classification["cyber_risk_score"])
+
             doc = {
                 "source_id": self.source_id,
                 "source_name": self.source_name,
@@ -180,8 +188,8 @@ class BaseCollector(ABC):
                 "enriched_at": None,
                 "language": "en",
                 "word_count": len((article.content or "").split()),
-                "severity": kw_classification["severity"].lower() if kw_classification["severity"] in ("Critical", "High") else severity,
-                "severity_score": float(kw_classification["cyber_risk_score"]),
+                "severity": computed_severity,
+                "severity_score": computed_score,
                 "tags": list(set(self.config.get("tags", []) + article.tags)),
                 "tlp_level": "white",
                 "threat_actors": kw_classification["threat_actors"],

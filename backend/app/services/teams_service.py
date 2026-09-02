@@ -44,18 +44,17 @@ _CYBER_TERMS = re.compile(
 
 
 def is_cyber_news(art: Dict[str, Any]) -> bool:
-    """Verify that an article is genuine cybersecurity risk news using KeywordClassifier dictionary."""
+    """Strictly verify if an article is genuine cybersecurity risk news using KeywordClassifier."""
     is_cyber = art.get("is_cybersecurity_news")
     if is_cyber is not None:
         return bool(is_cyber)
-    
-    # Fallback to dynamic classification
+
     try:
         from app.services.keyword_classifier import KeywordClassifier
         kw_res = KeywordClassifier.classify_article(art)
         return bool(kw_res.get("is_cybersecurity_news", False))
     except Exception:
-        text = f"{art.get('title', '')} {art.get('summary', '')} {art.get('content_clean', '')}"
+        text = f"{art.get('title', '')} {art.get('summary', '')} {art.get('content_clean', '')[:1500]}".lower()
         return bool(_CYBER_TERMS.search(text))
 
 
@@ -97,23 +96,6 @@ async def _mark_dispatched_in_db(art: Dict[str, Any], webhook_url: str):
             )
         except Exception:
             pass
-
-
-def is_cyber_news(art: Dict[str, Any]) -> bool:
-    """Strictly verify if an article is cybersecurity / CTI related."""
-    if art.get("cves") or art.get("threat_actors"):
-        return True
-
-    tags = [str(t).lower() for t in (art.get("tags") or [])]
-    if any(t in tags for t in ["breach", "ransomware", "vulnerability", "malware", "cybersecurity", "cve", "apt", "phishing", "zero-day", "security"]):
-        return True
-
-    cat = (art.get("category") or art.get("incident_type") or "").lower()
-    if cat and cat not in ("unknown", "general", "other", "news"):
-        return True
-
-    text = f"{art.get('title', '')} {art.get('summary', '')} {art.get('content_clean', '')[:1500]}".lower()
-    return bool(_CYBER_TERMS.search(text))
 
 
 def clean_summary_text(art: Dict[str, Any]) -> str:
@@ -592,16 +574,19 @@ FOREIGN_IN_INDIA_REGEX = re.compile(
 
 def extract_severity_level(art: Dict[str, Any]) -> str:
     """Extract standard severity rating: CRITICAL, HIGH, MEDIUM, INFO."""
+    if not is_cyber_news(art):
+        return "INFO"
+
     sev = str(art.get("severity") or "").strip().upper()
     if sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "INFORMATIONAL"):
         return "INFO" if sev in ("LOW", "INFORMATIONAL") else sev
 
     text = f"{art.get('title', '')} {art.get('summary', '')} {' '.join(art.get('tags') or [])}".lower()
-    if any(k in text for k in ["critical", "0-day", "zero-day", "rce", "unauthenticated remote", "active exploitation", "mass exploit"]):
+    if any(k in text for k in ["critical zero-day", "0-day rce", "actively exploited zero-day", "unauthenticated remote code execution", "mass exploitation in the wild"]):
         return "CRITICAL"
-    if any(k in text for k in ["high", "ransomware", "data breach", "database leak", "privilege escalation", "authentication bypass"]):
+    if any(k in text for k in ["ransomware", "data breach", "database leak", "privilege escalation", "authentication bypass", "cve-"]):
         return "HIGH"
-    if any(k in text for k in ["medium", "phishing", "malware", "ddos", "xss", "spoofing"]):
+    if any(k in text for k in ["phishing", "malware", "ddos", "xss", "spoofing", "security flaw"]):
         return "MEDIUM"
     return "INFO"
 
@@ -622,33 +607,33 @@ def format_timestamp_pretty(dt_val: Any) -> str:
 def is_company_breach_or_incident(art: Dict[str, Any]) -> bool:
     """
     Detect if an article specifically involves an Enterprise Breach, Data Leak, Ransomware,
-    Extortion, or targeted compromise (as opposed to a general CVE / software vulnerability advisory).
+    Extortion, or targeted compromise (as opposed to a general CVE / software advisory / tech news).
     """
+    if not is_cyber_news(art):
+        return False
+
     text = f"{art.get('title', '')} {art.get('summary', '')}".lower()
     tags = [str(t).lower() for t in (art.get("tags") or [])]
 
-    # Explicit breach / leak / ransomware keywords
+    # Explicit breach / leak / ransomware indicators
     breach_indicators = [
         "data breach", "database leak", "db leak", "db leaked", "records leaked",
-        "records stolen", "ransomware attack", "ransomware hits", "ransomware", "extortion", "claimed breach",
+        "records stolen", "ransomware attack", "ransomware hits", "extortion", "claimed breach",
         "confirms breach", "leaked credentials", "compromised database", "dump leaked",
-        "hacked", "stolen data", "exfiltrated data", "dark web leak", "stolen records",
+        "hacked and leaked", "stolen data", "exfiltrated data", "dark web leak", "stolen records",
         "compromised accounts", "data leak", "data dump"
     ]
-    if any(k in text for k in breach_indicators) or any(t in tags for t in ["breach", "data-leak", "ransomware", "leak", "extortion", "data-breach"]):
-        return True
-
-    inc_type = determine_incident_type(art).lower()
-    if inc_type in ["data breach", "data leak", "ransomware", "supply chain attack"]:
-        return True
+    has_breach_terms = any(k in text for k in breach_indicators) or any(t in tags for t in ["breach", "data-leak", "ransomware", "leak", "extortion", "data-breach"])
 
     # If it is clearly a vulnerability advisory or CVE bulletin, it is a general advisory
-    if any(k in text for k in ["vulnerabilit", "security flaw", "patch advisory", "cve-", "security update", "patch tuesday", "advisory ciad-", "buffer overflow"]):
+    if any(k in text for k in ["vulnerabilit", "security flaw", "patch advisory", "cve-", "security update", "patch tuesday", "advisory ciad-", "buffer overflow"]) and not has_breach_terms:
         return False
 
-    # If an affected company is identified
+    inc_type = determine_incident_type(art).lower()
     comp = extract_breached_company(art)
-    if comp and comp != "Not Specified":
+
+    # Must have both breach characteristics and an identified affected organization
+    if (has_breach_terms or inc_type in ["data breach", "data leak", "ransomware", "supply chain attack"]) and comp and comp not in ("Not Specified", "Unknown", "Target Organization"):
         return True
 
     return False
@@ -748,92 +733,117 @@ def is_indian_news(art: Dict[str, Any]) -> bool:
 
 def extract_threat_actor(art: Dict[str, Any]) -> str:
     """
-    Extract Threat Actor name from article.
-    Returns 'Unknown' if no threat actor is identified.
+    Extract verified threat actor name from article text or metadata.
+    Returns 'Unknown' if none detected.
     """
-    actors = art.get("threat_actors") or []
-    if isinstance(actors, list) and len(actors) > 0:
-        valid_actors = [str(a).strip() for a in actors if a and str(a).strip()]
-        if valid_actors:
-            return ", ".join(valid_actors)
-    if isinstance(actors, str) and actors.strip():
+    actors = art.get("threat_actors") or art.get("threat_actor")
+    if isinstance(actors, list) and actors:
+        for a in actors:
+            a_clean = str(a).strip()
+            if a_clean and a_clean.lower() not in ("unknown", "unattributed", "none", "n/a"):
+                return a_clean
+    elif isinstance(actors, str) and actors.strip() and actors.strip().lower() not in ("unknown", "unattributed", "none", "n/a"):
         return actors.strip()
 
     title = art.get("title") or ""
     summary = art.get("summary") or ""
-    text = f"{title} {summary} {' '.join(art.get('tags') or [])}"
+    full_text = f"{title} {summary} {art.get('content_clean', '')[:1000]}".lower()
 
-    for actor in KNOWN_ACTORS:
-        if re.search(r'\b' + re.escape(actor) + r'\b', text, re.IGNORECASE):
-            return actor.title()
+    # Actor alias catalog
+    actor_map = [
+        ("LockBit 3.0", ["lockbit", "lockbit 3.0", "lockbit 2.0", "lockbit-supp"]),
+        ("BlackCat (ALPHV)", ["blackcat", "alphv"]),
+        ("RansomHub", ["ransomhub"]),
+        ("Akira", ["akira ransomware", "akira group"]),
+        ("Clop", ["clop", "cl0p"]),
+        ("Rhysida", ["rhysida"]),
+        ("Qilin", ["qilin", "agenda ransomware"]),
+        ("BianLian", ["bianlian"]),
+        ("Play Ransomware", ["play ransomware", "play crypt"]),
+        ("Medusa", ["medusa ransomware", "medusa blog"]),
+        ("Scattered Spider", ["scattered spider", "unc3944", "0ktapus"]),
+        ("Volt Typhoon", ["volt typhoon", "bronze silhouette"]),
+        ("Lazarus Group", ["lazarus group", "lazarus", "hidden cobra", "apt38"]),
+        ("Fancy Bear (APT28)", ["fancy bear", "apt28", "strontium", "sofacy"]),
+        ("Cozy Bear (APT29)", ["cozy bear", "apt29", "nobelium", "midnight blizzard"]),
+        ("Black Basta", ["black basta", "blackbasta"]),
+        ("Direwolf", ["direwolf"]),
+        ("Settra", ["settra"]),
+        ("Space Bears", ["space bears"]),
+        ("DarkSide", ["darkside"]),
+        ("Conti", ["conti ransomware", "conti group"]),
+        ("ShinyHunters", ["shinyhunters", "shiny hunters"]),
+    ]
+
+    for display_name, aliases in actor_map:
+        if any(re.search(rf'\b{re.escape(alias)}\b', full_text) for alias in aliases):
+            return display_name
 
     return "Unknown"
 
 
+def _company_initials(name: str) -> str:
+    """Extract 2-character initials for company logo badge."""
+    words = [w for w in name.split() if w.isalnum()]
+    if len(words) >= 2:
+        return f"{words[0][0]}{words[1][0]}".upper()
+    if words and len(words[0]) >= 2:
+        return words[0][:2].upper()
+    return "CO"
+
+
 def _time_ago(dt_val: Any) -> str:
-    """Return human-readable relative time string, e.g. '2 hours ago'."""
+    """Return friendly relative time like '2 hours ago', 'Yesterday'."""
+    if not dt_val:
+        return "Recently"
     if isinstance(dt_val, str):
         try:
             dt_val = datetime.fromisoformat(dt_val.replace("Z", "+00:00"))
         except Exception:
-            return "recently"
-    if not isinstance(dt_val, datetime):
-        return "recently"
-    if dt_val.tzinfo is None:
-        dt_val = dt_val.replace(tzinfo=timezone.utc)
-    delta = datetime.now(timezone.utc) - dt_val
-    seconds = int(delta.total_seconds())
-    if seconds < 60:
-        return "just now"
-    if seconds < 3600:
-        return f"{seconds // 60} minute{'s' if seconds // 60 != 1 else ''} ago"
-    if seconds < 86400:
-        return f"{seconds // 3600} hour{'s' if seconds // 3600 != 1 else ''} ago"
-    days = seconds // 86400
-    return f"{days} day{'s' if days != 1 else ''} ago"
-
-
-def _company_initials(name: str) -> str:
-    """Return up to 2 uppercase initials for a company name avatar."""
-    words = [w for w in re.split(r'[\s\-&]+', name) if w]
-    if len(words) >= 2:
-        return (words[0][0] + words[1][0]).upper()
-    return name[:2].upper() if len(name) >= 2 else name[0].upper()
+            return "Recently"
+    if isinstance(dt_val, datetime):
+        if dt_val.tzinfo is None:
+            dt_val = dt_val.replace(tzinfo=timezone.utc)
+        diff = datetime.now(timezone.utc) - dt_val
+        seconds = int(diff.total_seconds())
+        if seconds < 60:
+            return "Just now"
+        if seconds < 3600:
+            m = seconds // 60
+            return f"{m}m ago"
+        if seconds < 86400:
+            h = seconds // 3600
+            return f"{h}h ago"
+        d = seconds // 86400
+        return f"{d}d ago"
+    return "Recently"
 
 
 def _severity_color(severity: str) -> str:
-    return {
-        "CRITICAL": "E74C3C",
-        "HIGH":     "E67E22",
-        "MEDIUM":   "D4AF37",
-        "INFO":     "3498DB",
-    }.get(severity.upper(), "D4AF37")
+    """Return hex color without '#' for Microsoft Teams themeColor."""
+    palette = {
+        "CRITICAL": "D9534F",
+        "HIGH": "E67E22",
+        "MEDIUM": "F1C40F",
+        "LOW": "3498DB",
+        "INFO": "2ECC71",
+        "INFORMATIONAL": "2ECC71",
+    }
+    return palette.get(severity.upper(), "3498DB")
 
 
 def _impact_tags(art: Dict[str, Any]) -> str:
-    """
-    Build a 'Potential Impact' line from keyword-matched buckets ONLY.
-    Never includes raw article tags (those are noisy/irrelevant for impact).
-    Returns empty string if no impact keywords detected.
-    """
-    buckets: list[str] = []
-
-    # Attack vector from helper
-    vector = extract_claimed_vector(art)
-    if vector:
-        buckets.append(vector)
-
-    text = f"{art.get('title', '')} {art.get('summary', '')}".lower()
+    """Generate concise impact tags based on article contents."""
+    text = f"{art.get('title', '')} {art.get('summary', '')} {art.get('content_clean', '')}".lower()
     tag_map = [
-        ("Unauthorized access", ["unauthorized access", "unauth", "access sold", "access claim"]),
-        ("Data exfiltration",   ["exfiltrat", "data stolen", "stolen data", "dump", "leak"]),
-        ("Credential theft",    ["credential", "password", "infostealer", "lumma", "redline"]),
-        ("Reputational risk",   ["unverified", "claimed", "alleged", "unconfirmed"]),
-        ("Ransomware",          ["ransomware", "encrypt", "lockbit", "akira", "clop"]),
-        ("Financial impact",    ["financial", "payment", "fraud", "extortion"]),
-        ("Service disruption",  ["downtime", "disruption", "outage", "ddos", "denial"]),
-        ("Supply chain risk",   ["supply chain", "third-party", "vendor"]),
+        ("Unauthorized access", ["unauthorized access", "compromised account", "credential"]),
+        ("Reputational risk", ["data breach", "leaked", "dump", "defacement"]),
+        ("Ransom demand", ["ransom", "extortion", "encryptor"]),
+        ("Data exfiltration", ["exfiltrat", "downloaded records", "stolen data"]),
+        ("Service disruption", ["ddos", "outage", "system down", "offline"]),
+        ("Supply chain risk", ["supply chain", "third-party", "vendor"]),
     ]
+    buckets = []
     for label, kws in tag_map:
         if label not in buckets and any(k in text for k in kws):
             buckets.append(label)
@@ -846,35 +856,6 @@ def _impact_tags(art: Dict[str, Any]) -> str:
 def build_threat_intelligence_breach_card(art: Dict[str, Any]) -> Dict[str, Any]:
     """
     Template 1: Company Cyber Incident / Intelligence Alert
-    Layout:
-      🔴 [SEVERITY] | [APP_NAME] INTELLIGENCE ALERT
-      🚨 COMPANY CYBER INCIDENT
-      [COMPANY NAME]
-      [Short threat headline]
-      ━━━━━━━━━━━━━━━━━━━━
-      AI ASSESSMENT
-      [2–3 line summary]
-      ━━━━━━━━━━━━━━━━━━━━
-      🎯 THREAT PROFILE
-      Attack       : [Type]
-      Threat Actor : [Actor]
-      Sector       : [Sector]
-      Region       : [Region]
-      Severity     : [Severity]
-      Confidence   : [Confidence]%
-      🧩 TECHNICAL INDICATORS
-      CVE          : [CVEs]
-      Malware      : [Malware]
-      MITRE        : [MITRE]
-      IOCs         : [IOC Count]
-      ━━━━━━━━━━━━━━━━━━━━
-      📌 INTELLIGENCE FACTS
-      Source       : [Source]
-      Date         : [Date]
-      Threat Actor : [Actor]
-      Company      : [Company]
-      ━━━━━━━━━━━━━━━━━━━━
-      [ VIEW FULL REPORT → ]
     """
     app_name = (getattr(settings, "APP_NAME", "") or "CLARITYTI").upper()
     platform_name_display = getattr(settings, "APP_NAME", "") or "ClarityTI"
@@ -888,7 +869,9 @@ def build_threat_intelligence_breach_card(art: Dict[str, Any]) -> Dict[str, Any]
 
     company_val = extract_breached_company(art)
     if not company_val or company_val in ("Not Specified", "Unknown", ""):
-        company_val = "Target Organization"
+        # Check title for company or subject entity
+        words = clean_title.split(":")
+        company_val = words[0].strip() if len(words) > 1 and len(words[0].strip()) < 35 else "Target Organization"
 
     severity = extract_severity_level(art)
     theme_color = _severity_color(severity)
@@ -896,41 +879,59 @@ def build_threat_intelligence_breach_card(art: Dict[str, Any]) -> Dict[str, Any]
     # AI Assessment (2-3 lines)
     ai_assessment = (art.get("ai_summary") or clean_summary_text(art)).strip()
 
-    # Threat Profile Fields
+    # Threat Profile Fields - Accurately extracted, never arbitrarily forced to Ransomware
     attack_type = determine_incident_type(art)
-    if attack_type in ("Cyber Advisory", "Vulnerability"):
-        attack_type = "Data Leak" if "leak" in clean_title.lower() else "Ransomware"
-
     threat_actor = extract_threat_actor(art)
     sector = determine_sector(art)
     country = (art.get("target_country") or extract_country(art) or "Global").title()
     if country.upper() == "UNKNOWN":
         country = "Global"
 
-    confidence_score = art.get("confidence_score") or art.get("confidence")
+    # Dynamic confidence calculation based on corroboration and indicator presence
+    confidence_score = art.get("confidence_score") or art.get("confidence") or art.get("ai_confidence")
     if confidence_score is not None:
         try:
-            conf_val = f"{int(float(confidence_score) * 100 if float(confidence_score) <= 1.0 else float(confidence_score))}%"
+            val_float = float(confidence_score)
+            conf_val = f"{int(val_float * 100 if val_float <= 1.0 else val_float)}%"
         except Exception:
-            conf_val = "92%"
+            conf_val = "90%"
     else:
-        conf_val = "95%" if (threat_actor != "Unknown" and art.get("cves")) else ("92%" if severity in ("CRITICAL", "HIGH") else "88%")
+        cves_found = art.get("cves") or []
+        iocs_found = art.get("iocs") or {}
+        has_iocs = bool(iocs_found.get("ips") or iocs_found.get("hashes") or iocs_found.get("domains"))
+        if threat_actor != "Unknown" and (cves_found or has_iocs):
+            conf_val = "94%"
+        elif threat_actor != "Unknown" or cves_found:
+            conf_val = "88%"
+        elif severity in ("CRITICAL", "HIGH"):
+            conf_val = "82%"
+        else:
+            conf_val = "75%"
 
-    # Technical Indicators: CVE, Malware, MITRE, IOCs
+    # Technical Indicators: CVE, Malware, MITRE, IOCs (Accurate - N/A if absent)
     cves_list = art.get("cves") or []
     cve_str = ", ".join(cves_list[:2]) if cves_list else "N/A"
 
     malware_list = art.get("malware_families") or []
-    malware_str = ", ".join(malware_list[:2]) if malware_list else "Unattributed"
+    malware_str = ", ".join(malware_list[:2]) if malware_list else ("Unattributed" if attack_type in ("Malware", "Ransomware") else "N/A")
 
     mitre_list = [m.get("technique_id", m) if isinstance(m, dict) else str(m) for m in (art.get("mitre_techniques") or [])]
-    mitre_str = ", ".join(mitre_list[:2]) if mitre_list else ("T1486" if "ransom" in attack_type.lower() else "T1190")
+    if mitre_list:
+        mitre_str = ", ".join(mitre_list[:2])
+    elif "ransomware" in attack_type.lower():
+        mitre_str = "T1486"
+    elif "phishing" in attack_type.lower():
+        mitre_str = "T1566"
+    elif "zero-day" in attack_type.lower() or "vulnerability" in attack_type.lower():
+        mitre_str = "T1190"
+    else:
+        mitre_str = "N/A"
 
     iocs_data = art.get("iocs") or {}
     total_iocs = int(art.get("ioc_count") or 0)
     if total_iocs == 0 and isinstance(iocs_data, dict):
         total_iocs = len(iocs_data.get("ips", [])) + len(iocs_data.get("domains", [])) + len(iocs_data.get("hashes", []))
-    iocs_str = str(total_iocs) if total_iocs > 0 else (str(len(cves_list)) if cves_list else "N/A")
+    iocs_str = str(total_iocs) if total_iocs > 0 else "N/A"
 
     # Facts: Source, Date, Threat Actor, Company
     source_name = art.get("source_name") or "Threat Intel Feed"
