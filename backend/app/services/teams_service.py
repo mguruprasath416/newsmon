@@ -11,8 +11,9 @@ Routes articles strictly to their corresponding Microsoft Teams channel:
 import re
 import httpx
 import asyncio
+import hashlib
 import urllib.parse
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 from datetime import datetime, timezone, timedelta
 from app.config import settings
 import structlog
@@ -591,6 +592,195 @@ def extract_severity_level(art: Dict[str, Any]) -> str:
     return "INFO"
 
 
+# ── Incident Registry & Multi-Source Correlation ──────────────────────────────
+_INCIDENT_STATE_REGISTRY: Dict[str, Dict[str, Any]] = {}
+_DISPATCHED_TEAMS_KEYS: Set[str] = set()
+
+
+def generate_incident_fingerprint(art: Dict[str, Any]) -> str:
+    """
+    Generate stable canonical incident fingerprint based on:
+    - Target Organization (normalized)
+    - Incident Type (e.g. ransomware, data_breach)
+    - Threat Actor (or unattributed)
+    - Target Country
+    - 72-Hour Correlation Time Window
+    """
+    comp = (art.get("target_company") or extract_breached_company(art) or "unknown").strip().lower()
+    comp_norm = re.sub(r'[^a-z0-9]', '', comp) or "unknown"
+    
+    inc_type = (art.get("incident_type") or determine_incident_type(art) or "incident").strip().lower()
+    actor = (art.get("threat_actor") or extract_threat_actor(art) or "unattributed").strip().lower()
+    country = (art.get("target_country") or extract_country(art) or "global").strip().lower()
+    
+    # 72-hour correlation window bucket
+    p_date = art.get("published_at") or art.get("crawled_at") or datetime.now(timezone.utc)
+    if isinstance(p_date, str):
+        try:
+            p_date = datetime.fromisoformat(p_date.replace("Z", "+00:00"))
+        except Exception:
+            p_date = datetime.now(timezone.utc)
+    if p_date.tzinfo is None:
+        p_date = p_date.replace(tzinfo=timezone.utc)
+        
+    day_epoch = int(p_date.timestamp() // (3 * 86400))
+    seed = f"{comp_norm}::{inc_type}::{actor}::{country}::{day_epoch}"
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
+
+
+def evaluate_incident_deduplication_and_update(art: Dict[str, Any], webhook_url: str = "") -> Dict[str, Any]:
+    """
+    Evaluates multi-source incident deduplication and material update tracking:
+    - Same incident from multiple sources -> ONE Team Alert (Duplicate = True)
+    - Claim -> Confirmation transition -> Material Update (Duplicate = False, Update = True)
+    - Claim -> Denial transition -> Material Update (Duplicate = False, Update = True)
+    - New record count disclosed -> Material Update (Duplicate = False, Update = True)
+    """
+    fp = generate_incident_fingerprint(art)
+    dispatch_key = f"{webhook_url}::{fp}"
+    
+    existing_incident = _INCIDENT_STATE_REGISTRY.get(fp)
+    claim_status = (art.get("claim_status") or determine_breach_status(art) or "claimed").lower()
+    records_count = art.get("claimed_records_count")
+    severity = (art.get("severity") or extract_severity_level(art) or "medium").lower()
+    
+    if not existing_incident:
+        _INCIDENT_STATE_REGISTRY[fp] = {
+            "fingerprint": fp,
+            "claim_status": claim_status,
+            "claimed_records_count": records_count,
+            "severity": severity,
+            "target_company": art.get("target_company") or extract_breached_company(art),
+            "first_seen": datetime.now(timezone.utc),
+            "source_count": 1,
+            "dispatched": False
+        }
+        return {
+            "is_duplicate": False,
+            "is_update": False,
+            "fingerprint": fp,
+            "reason": "New qualifying incident"
+        }
+
+    # Compare for material updates
+    existing_status = existing_incident.get("claim_status")
+    existing_records = existing_incident.get("claimed_records_count")
+    existing_incident["source_count"] += 1
+
+    # 1. Claim -> Confirmation Transition
+    if existing_status == "claimed" and claim_status == "confirmed":
+        existing_incident["claim_status"] = "confirmed"
+        return {
+            "is_duplicate": False,
+            "is_update": True,
+            "fingerprint": fp,
+            "update_type": "Claim Confirmed",
+            "reason": "Incident officially confirmed by organization/authority"
+        }
+
+    # 2. Claim/Confirmed -> Denial Transition
+    if existing_status in ("claimed", "confirmed") and claim_status == "denied":
+        existing_incident["claim_status"] = "denied"
+        return {
+            "is_duplicate": False,
+            "is_update": True,
+            "fingerprint": fp,
+            "update_type": "Incident Denied",
+            "reason": "Organization issued official denial statement"
+        }
+
+    # 3. New Record Count Disclosed
+    if existing_records is None and records_count is not None:
+        existing_incident["claimed_records_count"] = records_count
+        return {
+            "is_duplicate": False,
+            "is_update": True,
+            "fingerprint": fp,
+            "update_type": "Record Count Disclosed",
+            "reason": f"New record volume disclosed: {records_count}"
+        }
+
+    # If already dispatched and no material change -> Suppress as duplicate coverage
+    if dispatch_key in _DISPATCHED_TEAMS_KEYS or existing_incident.get("dispatched"):
+        return {
+            "is_duplicate": True,
+            "is_update": False,
+            "fingerprint": fp,
+            "reason": f"Duplicate multi-source coverage (Reported by {existing_incident['source_count']} sources)"
+        }
+
+    return {
+        "is_duplicate": False,
+        "is_update": False,
+        "fingerprint": fp,
+        "reason": "First dispatch for this incident"
+    }
+
+
+def _is_already_dispatched(art: Dict[str, Any], webhook_url: str) -> bool:
+    """Helper used during dispatch loop to suppress duplicate alerts."""
+    res = evaluate_incident_deduplication_and_update(art, webhook_url)
+    return res["is_duplicate"] and not res.get("is_update")
+
+
+async def _mark_dispatched_in_db(art: Dict[str, Any], webhook_url: str):
+    """Mark incident fingerprint as dispatched to prevent duplicate notifications."""
+    fp = generate_incident_fingerprint(art)
+    dispatch_key = f"{webhook_url}::{fp}"
+    _DISPATCHED_TEAMS_KEYS.add(dispatch_key)
+    if fp in _INCIDENT_STATE_REGISTRY:
+        _INCIDENT_STATE_REGISTRY[fp]["dispatched"] = True
+
+
+def is_indian_news(art: Dict[str, Any]) -> bool:
+    """Check if article involves Indian victim entity or target country."""
+    target_c = (art.get("target_country") or extract_country(art) or "").strip()
+    target_c_clean = re.sub(r'[\U0001F1E6-\U0001F1FF\U0001F300-\U0001F9FF]', '', target_c).strip().lower()
+    if target_c_clean in ("india", "in", "ind"):
+        return True
+    
+    comp = (art.get("target_company") or extract_breached_company(art) or "").strip()
+    title = art.get("title") or ""
+    summary = art.get("summary") or ""
+    clean_body = (art.get("content_clean") or "")[:2000]
+    full_text = f"{comp} {title} {summary} {clean_body}"
+    
+    return bool(INDIAN_COMPANIES_REGEX.search(full_text) or FOREIGN_IN_INDIA_REGEX.search(full_text))
+
+
+def is_gcc_middle_east_news(art: Dict[str, Any]) -> bool:
+    """Check if article involves Middle East / GCC victim entity or target country."""
+    target_c = (art.get("target_country") or extract_country(art) or "").strip()
+    target_c_clean = re.sub(r'[\U0001F1E6-\U0001F1FF\U0001F300-\U0001F9FF]', '', target_c).strip().lower()
+    if any(c.lower() in target_c_clean for c in MIDDLE_EAST_COUNTRIES_SET):
+        return True
+        
+    comp = (art.get("target_company") or extract_breached_company(art) or "").strip()
+    title = art.get("title") or ""
+    summary = art.get("summary") or ""
+    clean_body = (art.get("content_clean") or "")[:2000]
+    full_text = f"{comp} {title} {summary} {clean_body}"
+    
+    if any(c.lower() in full_text.lower() for c in MIDDLE_EAST_COUNTRIES_SET):
+        return True
+    
+    return bool(GCC_COMPANIES_REGEX.search(full_text) or FOREIGN_IN_MIDDLE_EAST_REGEX.search(full_text))
+
+
+def get_target_channel_route(art: Dict[str, Any]) -> str:
+    """
+    Strict target/victim-based regional channel routing:
+    - Target in India -> #indian-breaches
+    - Target in Middle East / GCC -> #middle-east-companies
+    - Global / Other Critical -> #high-priority-news
+    """
+    if is_indian_news(art):
+        return "#indian-breaches"
+    if is_gcc_middle_east_news(art):
+        return "#middle-east-companies"
+    return "#high-priority-news"
+
+
 def format_timestamp_pretty(dt_val: Any) -> str:
     """Format datetime into 'Aug 20, 2026, 07:48 AM'."""
     if isinstance(dt_val, datetime):
@@ -819,96 +1009,7 @@ def is_company_breach_or_incident(art: Dict[str, Any]) -> bool:
 
 
 
-def is_gcc_middle_east_news(art: Dict[str, Any]) -> bool:
-    """
-    Matches ALL cyber news for GCC & Middle East region:
-      - National CERT advisories (aeCERT, NCA Saudi, OCERT Oman, EG-CERT, INCD, CERT-IQ)
-      - Middle East / GCC enterprises (Aramco, NEOM, Etisalat, FAB, QNB, STC, BAPCO, etc.)
-      - Foreign companies operating in Middle East
-      - Regional threat actors, attacks, vulnerabilities, and data breaches
-    """
-    if not is_cyber_news(art):
-        return False
 
-    country_name = art.get("target_country") or extract_country(art)
-    company_name = extract_breached_company(art)
-
-    title = art.get("title") or ""
-    summary = art.get("summary") or ""
-    source_name = (art.get("source_name") or "").lower()
-    text = f"{title} {summary} {' '.join(art.get('tags') or [])}".lower()
-
-    # Check for Middle East CERT sources
-    if any(k in source_name for k in ["aecert", "uae cert", "nca", "saudi", "ocert", "oman", "eg-cert", "egypt", "incd", "israel", "cert-iq", "iraq"]):
-        return True
-
-    # Check if explicitly mentions a Middle East / GCC enterprise or Foreign company in Middle East
-    has_me_enterprise = (
-        bool(GCC_COMPANIES_REGEX.search(text))
-        or bool(FOREIGN_IN_MIDDLE_EAST_REGEX.search(text))
-        or (company_name in [
-            "Saudi Aramco", "NEOM", "Etisalat", "First Abu Dhabi Bank", "Qatar National Bank",
-            "Saudi Telecom Company", "Ooredoo", "Zain Group", "BAPCO"
-        ])
-    )
-
-    # Check if target country or text mentions GCC / Middle East
-    is_me_region = (country_name in MIDDLE_EAST_COUNTRIES_SET) or any(
-        kw in text for kw in [
-            "gcc", "uae", "united arab emirates", "dubai", "abu dhabi", "saudi", "saudi arabia",
-            "ksa", "riyadh", "aramco", "neom", "qatar", "doha", "kuwait", "bahrain", "manama",
-            "oman", "muscat", "middle east", "middle-east", "israel", "tel aviv", "egypt", "cairo",
-            "iran", "tehran", "iraq", "baghdad", "jordan", "lebanon", "turkey", "istanbul", "yemen", "syria"
-        ]
-    )
-
-    return is_me_region or has_me_enterprise
-
-
-def is_indian_news(art: Dict[str, Any]) -> bool:
-    """
-    Matches ALL cyber news for India:
-      - CERT-In & NCIIPC advisories
-      - Indian enterprises (TCS, Infosys, SBI, AIIMS, Reliance, Paytm, Razorpay, etc.)
-      - Foreign companies operating in India
-      - India-specific cyber attacks, threat actors, vulnerabilities, and data breaches
-    """
-    if not is_cyber_news(art):
-        return False
-
-    country_name = art.get("target_country") or extract_country(art)
-    company_name = extract_breached_company(art)
-
-    title = art.get("title") or ""
-    summary = art.get("summary") or ""
-    source_name = (art.get("source_name") or "").lower()
-    text = f"{title} {summary} {' '.join(art.get('tags') or [])}".lower()
-
-    # Generic global vulnerability/CVE advisories without explicit Indian enterprise/gov impact are NOT Indian news
-    is_generic_vuln = any(k in text for k in ["cve-", "log4j", "zero-day", "0-day", "rce", "buffer overflow", "deserialization"])
-    has_explicit_indian_org = any(k in text for k in [
-        "tcs", "infosys", "wipro", "hcl", "sbi", "aiims", "aadhaar", "gov.in", "nic.in", "drdo", "isro",
-        "indian army", "indian navy", "indian air force", "indian government", "indian bank", "razorpay", "paytm", "jio", "airtel"
-    ])
-    if is_generic_vuln and not has_explicit_indian_org:
-        if not ("cert-in" in source_name or "cert.in" in source_name or "nciipc" in source_name):
-            return False
-
-    # Check for Indian enterprise or Foreign enterprise in India
-    has_indian_enterprise = (
-        bool(INDIAN_COMPANIES_REGEX.search(text))
-        or bool(FOREIGN_IN_INDIA_REGEX.search(text))
-        or (company_name in ["TCS", "Infosys", "Wipro", "HCLTech", "State Bank of India", "AIIMS", "Physics Wallah", "Paytm", "Razorpay", "Reliance Jio", "Airtel", "Zomato", "Flipkart"])
-    )
-
-    is_india_region = (country_name == "India") or any(
-        kw in text for kw in [
-            "india", "indian", "cert-in", "cert.in", "nciipc", "meity", "delhi", "mumbai",
-            "bengaluru", "hyderabad", "chennai", "pune", "kolkata", "digital india", "gov.in", "nic.in"
-        ]
-    )
-
-    return is_india_region or has_indian_enterprise
 
 
 def extract_threat_actor(art: Dict[str, Any]) -> str:

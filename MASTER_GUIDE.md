@@ -415,4 +415,33 @@ Enforces the 19-point validation hierarchy across all incoming threat intelligen
 ### 5. Final Extraction & Validation Hierarchy
 $$\text{SOURCE} \rightarrow \text{FACTS} \rightarrow \text{EVIDENCE} \rightarrow \text{CLAIM STATUS} \rightarrow \text{CTI EXTRACTION} \rightarrow \text{SEVERITY} \rightarrow \text{INCIDENT CLASSIFICATION} \rightarrow \text{TEAM ALERT DECISION} \rightarrow \text{🔎 AI INSIGHT}$$
 
+---
+
+## 12. End-to-End Team Alert Quality, Deduplication & Routing Framework
+
+Enforces the 24-section QA and multi-source incident deduplication standard:
+
+### 1. Multi-Level Deduplication Architecture
+- **Tier 1 (Exact URL SHA-256):** Prevents duplicate ingestion of identical URLs.
+- **Tier 2 (Normalized Title SHA-256):** Rejects identical headlines stripped of formatting/whitespace.
+- **Tier 3 (Canonical Incident Fingerprint):** Hashes `target_company::incident_type::threat_actor::target_country::time_bucket` over a 72-hour correlation window.
+- **Multi-Source Rule:** 5 news sources reporting the same event generate **exactly ONE Team Alert** on the initial report, while updating the repository catalog.
+
+### 2. Incident State & Material Update Protocol
+A new alert is dispatched for an existing incident **only upon materially new intelligence**:
+- **Claim $\rightarrow$ Confirmation:** When the organization officially verifies an earlier claim.
+- **Claim $\rightarrow$ Denial:** When the organization issues an explicit denial statement.
+- **Scope & Record Disclosures:** When an unknown record volume is quantified (e.g. 250,000 records exfiltrated).
+- **Escalated Impact:** When operations are confirmed halted or critical infrastructure disrupted.
+
+### 3. Strict Victim-Centric Regional Routing
+- **`#indian-breaches`:** Target enterprise located in India (regardless of foreign threat actor nationality).
+- **`#middle-east-companies`:** Target enterprise located in GCC / Middle East region.
+- **`#high-priority-news`:** Global critical data breaches, zero-days, and executive intelligence briefings.
+
+### 4. Operational Principle
+$$\text{DETECT} \rightarrow \text{CLASSIFY} \rightarrow \text{VALIDATE} \rightarrow \text{CORRELATE} \rightarrow \text{DEDUPLICATE} \rightarrow \text{ASSESS UPDATE} \rightarrow \text{ROUTE} \rightarrow \text{DISPATCH}$$
+> **"One real incident $\rightarrow$ one useful alert."**
+
+
 
