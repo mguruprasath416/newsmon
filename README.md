@@ -9,6 +9,10 @@
 
 It continuously collects, normalizes, enriches, analyzes, correlates, searches, and visualizes cyber intelligence from 72+ trusted sources (vendors, security news, official national CERT advisories, and CISA KEV).
 
+### 🎯 Key Architectural Distinction
+- **🌐 Website Platform:** Comprehensive, broad cybersecurity intelligence including CVE disclosures, vendor advisories, patch updates, zero-day research, and security news.
+- **🚨 Team Alerts (Microsoft Teams):** Strictly filters for high-impact, actionable cyber incidents (confirmed/claimed enterprise breaches, customer data theft, ransomware attacks, company compromises, and critical infrastructure attacks) powered by **Google Gemini** for executive `🔎 AI INSIGHT` generation.
+
 ---
 
 ## 📁 Repository Structure
@@ -29,7 +33,8 @@ newsmon/
 │   ├── Dockerfile           # Backend container image
 │   └── requirements.txt     # Python dependencies
 ├── files/
-│   └── Keywords/            # CTI Taxonomy Keyword lists
+│   └── Keywords/            # CTI Taxonomy Keyword lists (590+ Terms)
+│       ├── Critical_Alerts/ # Data Breach, Data Theft, Ransomware, Compromise, Infrastructure
 │       ├── Attacks/         # DDoS, Ransomware, Supply Chain, Phishing, Espionage
 │       ├── Geography/       # India, USA, China, Europe, Russia, Middle East
 │       ├── Malware/         # Infostealer, RAT, Trojan, Botnet, Spyware

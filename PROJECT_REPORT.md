@@ -19,24 +19,29 @@ ClarityTI resolves this critical problem by establishing a centralized, single-p
 
 * **Primary Outcome**: Delivered a centralized intelligence platform indexing **5,550+ threat reports** with 100% automated collection and category separation, ensuring zero missed company breaches and reducing manual triage time by over 80%.
 
+### 🎯 Key Architectural Distinction: Website Intelligence vs. Team Alerts
+- **🌐 Website Platform:** Comprehensive, broad cybersecurity intelligence including CVE disclosures, vendor advisories, patch updates, zero-day research, and security news.
+- **🚨 Team Alerts (Microsoft Teams):** Strictly filters for high-impact, actionable cyber incidents (confirmed/claimed enterprise breaches, customer data theft, ransomware attacks, company compromises, and critical infrastructure attacks) powered by **Google Gemini** for executive `🔎 AI INSIGHT` generation.
+
 ---
 
 ## 3. Problem Statement
 The Foresiet security operations team identified major operational challenges in tracking global cyber threats:
 1. **Missed Company Breaches**: Critical corporate data breaches, supply chain compromises, and ransomware announcements were occasionally missed or identified late because threat news was scattered across dozens of unlinked websites.
-2. **Lack of News Categorization**: Security teams spent hours manually filtering irrelevant general IT news from actual enterprise data leaks, CVE advisories, and targeted APT campaigns.
-3. **Manual Analysis Latency**: Extracting CVEs, IP addresses, domains, and file hashes from unstructured blog posts manually created significant response latency.
-4. **Delayed Stakeholder Alerts**: Lack of automated notification channels meant critical breach news took hours to reach incident response leads and company executives.
+2. **Alert Fatigue from Routine News**: Analysts were overwhelmed when routine patch notes, CVE disclosures, and minor software advisories generated unnecessary urgent alerts.
+3. **Lack of Incident Prioritization**: Security teams needed clear separation between broad research intelligence (viewed on the dashboard) and urgent actionable incidents (pushed directly to Microsoft Teams).
+4. **Manual Analysis Latency**: Extracting CVEs, IP addresses, domains, and file hashes from unstructured blog posts manually created significant response latency.
+5. **Delayed Stakeholder Alerts**: Lack of automated notification channels meant critical breach news took hours to reach incident response leads and company executives.
 
 ---
 
 ## 4. Project Objectives
 * **Obj 1 — Centralized Multi-Source Aggregation**: Build automated crawlers to harvest security news and advisories from 39+ global vendor, official CERT portals, and breach reporting sources every 30 minutes.
-* **Obj 2 — Automated News Categorization & Separation**: Automatically categorize ingested reports into distinct operational channels (Company Breaches, Vulnerability Advisories, Threat Actor TTPs, Ransomware News).
+* **Obj 2 — Automated News Categorization & Separation**: Automatically categorize ingested reports into distinct operational channels on the website while strictly filtering Team Alerts for high-impact actionable incidents.
 * **Obj 3 — Automated IOC & Entity Extraction**: Extract CVEs, IP addresses, domains, file hashes, and MITRE ATT&CK techniques from unstructured text using regex and spaCy NER engines.
 * **Obj 4 — Threat Actor Directory & Entity Matching**: Catalog 946 state-sponsored APTs and ransomware groups and automatically tag every breach report with responsible threat actors.
-* **Obj 5 — CISA KEV Integration**: Synchronize CISA's Known Exploited Vulnerabilities catalog (1,660+ CVEs) to flag active exploits targeting corporate infrastructure.
-* **Obj 6 — Real-Time Multi-Channel Alerts**: Deliver instant adaptive card notifications with breach severity badges, Source, Date of Publish, Threat Actor, and Company facts to Foresiet Microsoft Teams (`#indian-based`, `#gcc-middle-east`) and Discord channels.
+* **Obj 5 — Google Gemini Executive AI Insights**: Integrate Google Gemini as the primary intelligence engine to synthesize concise, high-value `🔎 AI INSIGHT` executive summaries for all critical alert cards.
+* **Obj 6 — Real-Time Multi-Channel Alerts**: Deliver instant adaptive card notifications with breach severity badges, Source, Date of Publish, Threat Actor, and Company facts to Foresiet Microsoft Teams (`#indian-breaches`, `#middle-east-companies`, `#high-priority-news`).
 
 ---
 
