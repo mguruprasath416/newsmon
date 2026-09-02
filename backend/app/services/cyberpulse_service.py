@@ -808,3 +808,66 @@ class CyberPulseService:
             "high_heat_events": high_heat_count,
             "elapsed_seconds": round(elapsed, 2),
         }
+
+
+class CyberPulseCorrelationEngine:
+    """
+    Evaluates incident relationship between two intelligence reports based on 34-section standard:
+    - SAME_INCIDENT: Identical victim organization + same event within correlation window.
+    - RELATED_INCIDENT: Same threat actor / campaign / sector, but distinct victim entities.
+    - UNRELATED: No meaningful intelligence relationship.
+    """
+
+    @staticmethod
+    def correlate_reports(art_a: Dict[str, Any], art_b: Dict[str, Any]) -> Dict[str, Any]:
+        comp_a = (art_a.get("target_company") or extract_breached_company(art_a) or "Unknown").strip().lower()
+        comp_b = (art_b.get("target_company") or extract_breached_company(art_b) or "Unknown").strip().lower()
+
+        type_a = (art_a.get("incident_type") or determine_incident_type(art_a) or "incident").strip().lower()
+        type_b = (art_b.get("incident_type") or determine_incident_type(art_b) or "incident").strip().lower()
+
+        actor_a = (art_a.get("threat_actor") or extract_threat_actor(art_a) or "Unknown").strip().lower()
+        actor_b = (art_b.get("threat_actor") or extract_threat_actor(art_b) or "Unknown").strip().lower()
+
+        # Check for same named victim organization
+        has_same_victim = (
+            comp_a not in ("unknown", "not specified", "target organization") and
+            comp_b not in ("unknown", "not specified", "target organization") and
+            (comp_a == comp_b or comp_a in comp_b or comp_b in comp_a)
+        )
+
+        has_different_victim = (
+            comp_a not in ("unknown", "not specified", "target organization") and
+            comp_b not in ("unknown", "not specified", "target organization") and
+            not has_same_victim
+        )
+
+        has_same_actor = (
+            actor_a not in ("unknown", "unattributed") and
+            actor_b not in ("unknown", "unattributed") and
+            (actor_a == actor_b or actor_a in actor_b or actor_b in actor_a)
+        )
+
+        # 1. SAME INCIDENT
+        if has_same_victim:
+            return {
+                "relationship": "SAME_INCIDENT",
+                "reason": f"Both articles describe the incident involving victim organization '{comp_a}'.",
+                "shared_victim": comp_a,
+                "shared_actor": actor_a if has_same_actor else None
+            }
+
+        # 2. RELATED INCIDENT (e.g. Same Actor attacking different victims, or same campaign)
+        if has_different_victim and has_same_actor:
+            return {
+                "relationship": "RELATED_INCIDENT",
+                "reason": f"Same threat actor '{actor_a}' targeting different victim organizations ('{comp_a}' vs '{comp_b}').",
+                "shared_actor": actor_a,
+                "victims": [comp_a, comp_b]
+            }
+
+        # 3. UNRELATED
+        return {
+            "relationship": "UNRELATED",
+            "reason": "Different victim entities, distinct event types, and unrelated threat actors."
+        }

@@ -471,6 +471,28 @@ Enforces transparent, evidence-based threat intelligence verification across all
 ### 4. Verification Hierarchy
 $$\text{SOURCE} \rightarrow \text{EVIDENCE} \rightarrow \text{CLAIM} \rightarrow \text{CORROBORATION} \rightarrow \text{COMPANY RESPONSE} \rightarrow \text{CONFIDENCE} \rightarrow \text{CLAIM STATUS} \rightarrow \text{SEVERITY} \rightarrow \text{TEAM ALERT}$$
 
+---
+
+## 14. RAG, Semantic Search & CyberPulse Incident Graph Framework
+
+Enforces the 34-section hybrid retrieval and cross-source intelligence correlation standard:
+
+### 1. Hybrid Search Architecture
+- **BM25 Lexical Matching:** Exact matches for CVE identifiers, threat actor names, company entities, and specific malware families.
+- **Vector Semantic Search (NVIDIA Nemotron-3 1B):** Discovers conceptually related incidents, similar extortion narratives, and attack patterns across disparate sources.
+- **Cross-Encoder Reranking (NVIDIA Mistral-4B):** Prioritizes exact entity overlaps, verified disclosures, and temporal relevance.
+
+### 2. Tri-State Incident Correlation Engine
+Evaluates relationship between intelligence reports:
+- **`SAME_INCIDENT`:** Same victim organization + identical event within a 72-hour window.
+- **`RELATED_INCIDENT`:** Same threat actor or campaign, but targeting distinct victim organizations.
+- **`UNRELATED`:** Different organizations, distinct event types, and unrelated actors.
+
+### 3. CyberPulse Dynamic Heat & Incident Timeline
+$$\text{ARTICLE} \rightarrow \text{ENTITIES} \rightarrow \text{HYBRID SEARCH} \rightarrow \text{RERANKING} \rightarrow \text{CORRELATION} \rightarrow \text{CYBERPULSE CLUSTER} \rightarrow \text{TIMELINE} \rightarrow \text{RAG GRAPH}$$
+> **"Semantic similarity suggests a relationship; entities, time, technical details, and evidence determine whether that relationship is real."**
+
+
 
 
 
