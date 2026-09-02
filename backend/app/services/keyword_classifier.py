@@ -146,6 +146,7 @@ class KeywordClassifier:
         detailed_matches: Dict[str, Dict[str, List[str]]] = {}
         all_matched_terms: Set[str] = set()
 
+        critical_alert_weight = 0
         attack_weight = 0
         vuln_weight = 0
         malware_weight = 0
@@ -172,7 +173,9 @@ class KeywordClassifier:
                             all_matched_terms.add(f"{tm.strip()} (Title)")
 
                     # Weight calculations
-                    if cat_name == "Attacks":
+                    if cat_name == "Critical_Alerts":
+                        critical_alert_weight += 40
+                    elif cat_name == "Attacks":
                         attack_weight += 25
                     elif cat_name == "Malware":
                         malware_weight += 20
@@ -203,28 +206,46 @@ class KeywordClassifier:
             matched_by_category["Vulnerabilities"].append("CVE")
             vuln_weight += 20
 
+        _BROAD_CYBER_TERMS = re.compile(
+            r'\b('
+            r'cybersecurity|infosecurity|information security|vulnerability|exploit|threat|hacker|hacking|'
+            r'data breach|data leak|ransomware|phishing|malware|zero-day|cve|rce|security advisory|'
+            r'security update|security researcher|security posture|ciso|fido2|mfa|encryption|decryption|infosteal|'
+            r'pentest|soc analyst|siem|edr|xdr|firewall|intrusion|network security|endpoint security|'
+            r'supply chain|cert-in|cisa|nist|dark web|cyberattack|cyber attack|request smuggling|proof.of.concept'
+            r')\b',
+            re.IGNORECASE
+        )
+        has_broad_cyber = bool(_BROAD_CYBER_TERMS.search(search_text))
+
         # Check if genuine cybersecurity news
         is_cyber = bool(
-            matched_by_category["Attacks"]
-            or matched_by_category["Malware"]
-            or matched_by_category["Vulnerabilities"]
-            or matched_by_category["Threat Actors"]
+            matched_by_category.get("Critical_Alerts")
+            or matched_by_category.get("Attacks")
+            or matched_by_category.get("Malware")
+            or matched_by_category.get("Vulnerabilities")
+            or matched_by_category.get("Threat Actors")
             or cves_found
             or extracted_iocs.get("ipv4")
             or extracted_iocs.get("sha256")
-            or (matched_by_category["Targets"] and (attack_weight > 0 or vuln_weight > 0 or malware_weight > 0))
+            or (matched_by_category.get("Targets") and (attack_weight > 0 or vuln_weight > 0 or malware_weight > 0 or critical_alert_weight > 0))
+            or has_broad_cyber
         )
 
         # Calculate dynamic Cyber Risk Score (0 - 100)
         base_score = 0
         if is_cyber:
-            base_score = min(100, attack_weight + vuln_weight + malware_weight + actor_weight + target_weight)
-            if "Ransomware" in matched_by_category["Attacks"] or "Zero-Day" in matched_by_category["Vulnerabilities"]:
+            base_score = min(100, critical_alert_weight + attack_weight + vuln_weight + malware_weight + actor_weight + target_weight)
+            if matched_by_category.get("Critical_Alerts"):
                 base_score = max(85, base_score)
-            if "Critical Infrastructure" in matched_by_category["Targets"] or "Energy" in matched_by_category["Targets"]:
+            if "Ransomware" in matched_by_category.get("Attacks", []) or "Zero-Day" in matched_by_category.get("Vulnerabilities", []):
+                base_score = max(85, base_score)
+            if "Critical Infrastructure" in matched_by_category.get("Targets", []) or "Energy" in matched_by_category.get("Targets", []):
                 base_score = max(80, base_score)
-            if "Government" in matched_by_category["Targets"] or "Banking" in matched_by_category["Targets"] or "Healthcare" in matched_by_category["Targets"]:
+            if "Government" in matched_by_category.get("Targets", []) or "Banking" in matched_by_category.get("Targets", []) or "Healthcare" in matched_by_category.get("Targets", []):
                 base_score = max(75, base_score)
+            if base_score == 0 and has_broad_cyber:
+                base_score = 25  # Informational / Low for general research and threat reports
 
         if base_score >= 80:
             severity = "Critical"

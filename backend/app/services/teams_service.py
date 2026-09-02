@@ -604,39 +604,117 @@ def format_timestamp_pretty(dt_val: Any) -> str:
     return datetime.now(timezone.utc).strftime("%b %d, %Y, %I:%M %p")
 
 
-def is_company_breach_or_incident(art: Dict[str, Any]) -> bool:
+# ── Critical Actionable Incident Engine for Team Alerts ───────────────────────
+_CRITICAL_INCIDENT_TERMS = re.compile(
+    r'\b('
+    # Data Breach & Theft
+    r'data breach|database breach|corporate breach|company breach|security breach|'
+    r'customer data breach|employee data breach|database compromised|network breach|system breach|'
+    r'massive data breach|large-scale data breach|sensitive data exposed|customer records exposed|'
+    r'personal data exposed|mass data exposure|confidential data exposed|'
+    r'data stolen|data theft|stolen customer data|stolen employee data|stolen corporate data|'
+    r'sensitive data stolen|customer records stolen|employee records stolen|personal data stolen|'
+    r'financial data stolen|medical records stolen|patient data stolen|database stolen|database exfiltrated|'
+    r'data exfiltration|mass data exfiltration|large-scale data theft|information stolen|records stolen|'
+    # Ransomware Incidents & Encryptions
+    r'ransomware attack|ransomware hit|ransomware incident|ransomware victim|company hit by ransomware|'
+    r'organization hit by ransomware|hospital hit by ransomware|bank hit by ransomware|government hit by ransomware|'
+    r'ransomware outbreak|ransomware infection|systems encrypted|systems were encrypted|files encrypted|'
+    r'network encrypted|operations disrupted by ransomware|ransom demand|ransomware extortion|double extortion|'
+    r'triple extortion|ransomware data leak|ransomware data theft|ransomware data exfiltration|'
+    # Company Compromise & Unauthorized Access
+    r'company compromised|company hacked|company breached|organization compromised|organization hacked|'
+    r'organization breached|corporate network compromised|corporate systems compromised|internal systems compromised|'
+    r'enterprise network compromised|enterprise systems compromised|corporate account compromised|'
+    r'cloud account compromised|administrator account compromised|employee accounts compromised|'
+    r'company credentials stolen|corporate credentials stolen|unauthorized access to company|'
+    r'threat actors gained access|attackers gained access|attacker gained access|'
+    # Critical Infrastructure & Major Disruption
+    r'critical infrastructure attack|critical infrastructure cyberattack|critical infrastructure compromised|'
+    r'power grid attack|electric grid attack|power plant cyberattack|energy infrastructure attack|'
+    r'water infrastructure attack|water utility cyberattack|telecom infrastructure attack|'
+    r'hospital infrastructure attack|transportation infrastructure attack|airport cyberattack|'
+    r'railway cyberattack|pipeline cyberattack|nuclear facility cyberattack|critical infrastructure ransomware|'
+    r'service disrupted by cyberattack|major service disruption|cyberattack disrupts services|'
+    r'cyberattack disrupted operations|business operations disrupted|network outage caused by cyberattack|'
+    # Extortion & Major Leaks
+    r'threat actor claims breach|hacker claims breach|hacker claims data theft|threat group claims data theft|'
+    r'extortion claim|extortion attack|data extortion|stolen data published|stolen data leaked|breached data published'
+    r')\b',
+    re.IGNORECASE
+)
+
+_ORDINARY_NEWS_EXCLUSIONS = re.compile(
+    r'\b('
+    r'security advisory|patch tuesday|security update|firmware update|patch available|'
+    r'bug bounty|cve-\d{4}-\d+|vulnerability in|zero-day in|flaw in|bug in|'
+    r'cisa adds|cisa adds two|known exploited vulnerabilities|kev catalog|'
+    r'proof of concept|poc published|security researchers discover|researchers find|'
+    r'how to patch|mitigation steps|advisory released|security bulletin|release notes'
+    r')\b',
+    re.IGNORECASE
+)
+
+
+def is_critical_actionable_incident(art: Dict[str, Any]) -> bool:
     """
-    Detect if an article specifically involves an Enterprise Breach, Data Leak, Ransomware,
-    Extortion, or targeted compromise (as opposed to a general CVE / software advisory / tech news).
+    Strict Team Alert Decision Engine:
+    - Normal News (CVEs, advisories, patches, zero-day research, bug bounties) -> WEBSITE ONLY (Returns False)
+    - Critical Actionable Incident (Breach, Data Theft, Ransomware Deployment, Critical Infra Attack) -> TEAM ALERT (Returns True)
     """
     if not is_cyber_news(art):
         return False
 
-    text = f"{art.get('title', '')} {art.get('summary', '')}".lower()
-    tags = [str(t).lower() for t in (art.get("tags") or [])]
+    title = (art.get("title") or "").strip()
+    summary = (art.get("summary") or "").strip()
+    clean_body = (art.get("content_clean") or "")[:2000]
+    full_text = f"{title} {summary} {clean_body}".lower()
 
-    # Explicit breach / leak / ransomware indicators
-    breach_indicators = [
-        "data breach", "database leak", "db leak", "db leaked", "records leaked",
-        "records stolen", "ransomware attack", "ransomware hits", "extortion", "claimed breach",
-        "confirms breach", "leaked credentials", "compromised database", "dump leaked",
-        "hacked and leaked", "stolen data", "exfiltrated data", "dark web leak", "stolen records",
-        "compromised accounts", "data leak", "data dump"
-    ]
-    has_breach_terms = any(k in text for k in breach_indicators) or any(t in tags for t in ["breach", "data-leak", "ransomware", "leak", "extortion", "data-breach"])
-
-    # If it is clearly a vulnerability advisory or CVE bulletin, it is a general advisory
-    if any(k in text for k in ["vulnerabilit", "security flaw", "patch advisory", "cve-", "security update", "patch tuesday", "advisory ciad-", "buffer overflow"]) and not has_breach_terms:
+    # If it is purely an advisory / CVE / Patchwork / Zero-day disclosure without victim impact:
+    has_victim_signals = any(k in title.lower() for k in [
+        "stolen", "breached", "hits", "hit by", "hacked", "extort", "compromised",
+        "leaked", "confirms breach", "claims breach", "claims data", "data leak", "encrypted"
+    ])
+    
+    is_pure_advisory = bool(_ORDINARY_NEWS_EXCLUSIONS.search(title)) and not has_victim_signals
+    if is_pure_advisory:
         return False
 
-    inc_type = determine_incident_type(art).lower()
+    # Check if this matches critical actionable incident conditions (Data Breach, Ransomware, Critical Infra, Service Disruption, Company Compromise)
+    has_critical_incident_match = bool(_CRITICAL_INCIDENT_TERMS.search(full_text))
+    if has_critical_incident_match:
+        return True
+    
+    # Check claim status from AI enrichment
+    claim_status = (art.get("claim_status") or "").lower()
+    has_explicit_breach = claim_status in ("claimed", "confirmed", "denied")
+    
+    # Check if there is an affected company or victim organization
     comp = extract_breached_company(art)
+    has_victim_company = bool(comp and comp not in ("Not Specified", "Unknown", "Target Organization"))
 
-    # Must have both breach characteristics and an identified affected organization
-    if (has_breach_terms or inc_type in ["data breach", "data leak", "ransomware", "supply chain attack"]) and comp and comp not in ("Not Specified", "Unknown", "Target Organization"):
+    # Explicit breach / theft / ransomware keywords in text
+    has_incident_signals = any(k in full_text for k in [
+        "stole", "stolen", "exfiltrat", "encrypt", "ransomware", "data breach", "hacked",
+        "extort", "compromise", "records stolen", "patient", "customer data", "employee data",
+        "power grid", "infrastructure attack", "service disruption"
+    ])
+
+    if has_explicit_breach and (has_victim_company or has_incident_signals):
+        return True
+
+    # Ransomware / Data Breach / Major Extortion incident types
+    inc_type = determine_incident_type(art).lower()
+    if inc_type in ["data breach", "data leak", "ransomware", "supply chain attack"] and (has_victim_company or has_incident_signals):
         return True
 
     return False
+
+
+def is_company_breach_or_incident(art: Dict[str, Any]) -> bool:
+    """Alias pointing to the unified critical incident evaluation engine."""
+    return is_critical_actionable_incident(art)
+
 
 
 def is_gcc_middle_east_news(art: Dict[str, Any]) -> bool:
@@ -1491,15 +1569,10 @@ class TeamsService:
             seen_fingerprints.add(fp)
             non_duplicate_articles.append(art)
 
-        # STRICT FILTER: ONLY HIGH & CRITICAL SEVERITY NEWS
+        # STRICT FILTER: ONLY CRITICAL ACTIONABLE INCIDENTS FOR TEAM ALERTS (ORDINARY CVES/ADVISORIES KEPT ON WEBSITE ONLY)
         high_severe_articles = [
             art for art in non_duplicate_articles
-            if is_cyber_news(art) and (
-                extract_severity_level(art) in ("CRITICAL", "HIGH")
-                or str(art.get("severity", "")).upper() in ("CRITICAL", "HIGH")
-                or art.get("cves")
-                or (art.get("threat_actors") and any(a for a in art.get("threat_actors") if str(a).lower() not in ("unattributed", "unknown", "none")))
-            )
+            if is_critical_actionable_incident(art)
         ]
 
         cyber_articles = [art for art in non_duplicate_articles if is_cyber_news(art)]
