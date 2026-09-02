@@ -101,7 +101,27 @@ class AIEnrichmentService:
                     model=settings.GEMINI_MODEL,
                 )
 
-        # ── Secondary: NVIDIA NIM ──────────────────────────────────────────
+        # ── Secondary: OpenAI / ChatGPT (gpt-5.6-luna) ──────────────────
+        if settings.OPENAI_API_KEY:
+            try:
+                result = await cls._enrich_with_openai(title, body_text)
+                if result:
+                    log.info(
+                        "CTI classification via OpenAI",
+                        model=settings.OPENAI_MODEL,
+                        claim_status=result.get("claim_status"),
+                        severity=result.get("severity"),
+                        threat_actor=result.get("threat_actor"),
+                    )
+                    return result
+            except Exception as e:
+                log.warning(
+                    "OpenAI classification failed, trying next engine",
+                    error=str(e),
+                    model=settings.OPENAI_MODEL,
+                )
+
+        # ── Tertiary: NVIDIA NIM ──────────────────────────────────────────
         if settings.NVIDIA_API_KEY:
             try:
                 result = await cls._enrich_with_nvidia(title, body_text)
@@ -124,6 +144,39 @@ class AIEnrichmentService:
         # ── Fallback: Heuristic ──────────────────────────────────────────
         log.info("CTI classification via heuristic fallback")
         return cls._heuristic_enrichment(title, body_text)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # OpenAI / ChatGPT Path
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @classmethod
+    async def _enrich_with_openai(cls, title: str, body_text: str) -> Optional[Dict[str, Any]]:
+        """
+        Call OpenAI / ChatGPT chat completions API.
+        Model: settings.OPENAI_MODEL (e.g. gpt-5.6-luna)
+        """
+        api_key = settings.OPENAI_API_KEY
+        if not api_key:
+            return None
+
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=api_key)
+        user_content = f"Title: {title}\n\nBody:\n{body_text[:6000]}"
+
+        response = await client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            temperature=0.1,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
+        )
+
+        raw_content = response.choices[0].message.content.strip()
+        parsed = json.loads(raw_content)
+        cls._validate_and_sanitize(parsed)
+        return parsed
 
     # ─────────────────────────────────────────────────────────────────────────
     # Google Gemini Path

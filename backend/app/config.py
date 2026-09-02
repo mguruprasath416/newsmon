@@ -75,7 +75,7 @@ class Settings(BaseSettings):
 
     # ── OpenAI ────────────────────────────────────────────────────────
     OPENAI_API_KEY: str = ""
-    OPENAI_MODEL: str = "gpt-4.1"
+    OPENAI_MODEL: str = "gpt-5.6-luna"
     OPENAI_MAX_TOKENS: int = 8000
     OPENAI_TEMPERATURE: float = 0.1
 
