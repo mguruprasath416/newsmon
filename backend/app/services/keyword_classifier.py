@@ -25,7 +25,15 @@ DEFAULT_KEYWORDS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "files", "Keywords")
 )
 if not os.path.exists(DEFAULT_KEYWORDS_DIR):
-    DEFAULT_KEYWORDS_DIR = r"d:\Feed\files\Keywords"
+    for candidate in [
+        "/files/Keywords",
+        "/app/files/Keywords",
+        "/app/../files/Keywords",
+        r"d:\Feed\files\Keywords",
+    ]:
+        if os.path.exists(candidate):
+            DEFAULT_KEYWORDS_DIR = candidate
+            break
 
 _ioc_extractor = IOCExtractor()
 
