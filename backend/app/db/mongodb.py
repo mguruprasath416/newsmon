@@ -104,6 +104,9 @@ def get_evidence_collection():
 def get_alert_dispatches_collection():
     return MongoDB.collection("alert_dispatches")
 
+def get_logs_collection():
+    return MongoDB.collection("system_logs")
+
 def get_reports_collection():
     return MongoDB.collection("reports")
 
