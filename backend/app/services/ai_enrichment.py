@@ -483,3 +483,133 @@ class AIEnrichmentService:
             data["summary"] = "No summary available."
         else:
             data["summary"] = str(data.get("summary")).strip()
+
+
+class SourceReliabilityEngine:
+    """
+    Evaluates source reliability, evidence strength, confidence, and conflict detection
+    for threat intelligence articles without altering the public 10-field CTI contract.
+    """
+
+    @staticmethod
+    def evaluate(article: Dict[str, Any], raw_text: str = "") -> Dict[str, Any]:
+        source_name = str(article.get("source_name") or "").lower()
+        title = str(article.get("title") or "")
+        summary = str(article.get("summary") or "")
+        full_text = f"{source_name} {title} {summary} {raw_text}".lower()
+
+        # 1. Source Classification
+        source_type = "unknown"
+        if any(k in source_name for k in ["cert", "cisa", "nciipc", "ae_cert"]):
+            source_type = "cert"
+        elif any(k in source_name for k in ["fbi", "interpol", "europol", "doj", "police"]):
+            source_type = "law_enforcement"
+        elif any(k in source_name for k in ["sec", "regulatory", "ftc", "ico", "gdpr"]):
+            source_type = "regulator"
+        elif any(k in source_name for k in ["microsoft", "google", "mandiant", "crowdstrike", "palo alto", "recorded future", "sentinelone"]):
+            source_type = "security_vendor"
+        elif any(k in source_name for k in ["bleepingcomputer", "the hacker news", "securityweek", "reuters", "techcrunch", "dark reading"]):
+            source_type = "reputable_media"
+        elif any(k in full_text for k in ["threat actor post", "dark web forum", "ransomware leak site", "telegram channel"]):
+            source_type = "threat_actor"
+        elif any(k in full_text for k in ["tweet", "x.com", "social media", "reddit"]):
+            source_type = "social_media"
+        elif any(k in full_text for k in ["researcher", "independent analysis", "security blog"]):
+            source_type = "security_researcher"
+
+        # 2. Source Reliability
+        reliability_map = {
+            "official_company": "very_high",
+            "government": "very_high",
+            "regulator": "very_high",
+            "law_enforcement": "very_high",
+            "cert": "very_high",
+            "security_vendor": "high",
+            "reputable_media": "high",
+            "security_researcher": "medium",
+            "threat_actor": "very_low",
+            "social_media": "very_low",
+            "unknown": "medium"
+        }
+        source_reliability = reliability_map.get(source_type, "medium")
+
+        # 3. Evidence Types Identification
+        evidence_types = []
+        if any(k in full_text for k in ["sec 8-k", "regulatory filing", "filing with the sec"]):
+            evidence_types.append("regulatory_filing")
+        if any(k in full_text for k in ["official statement", "press release", "company confirmed", "spokesperson stated"]):
+            evidence_types.append("official_statement")
+        if any(k in full_text for k in ["law enforcement statement", "indictment", "police confirmed"]):
+            evidence_types.append("law_enforcement_statement")
+        if any(k in full_text for k in ["dark web leak site", "extortion site", "listed on leak site"]):
+            evidence_types.append("leak_site_post")
+        if any(k in full_text for k in ["sample data", "data sample", "sample files", "proof of hack"]):
+            evidence_types.append("stolen_data_sample")
+        if any(k in full_text for k in ["screenshot", "screenshots of active directory", "screenshots"]):
+            evidence_types.append("screenshots")
+        if any(k in full_text for k in ["threat actor claims", "ransomware group claims", "hackers claim"]):
+            evidence_types.append("threat_actor_claim")
+        if not evidence_types:
+            evidence_types.append("reputable_media_reporting" if source_reliability == "high" else "none")
+
+        # 4. Evidence Strength (0-5)
+        evidence_score = 1
+        if "regulatory_filing" in evidence_types or "official_statement" in evidence_types or "law_enforcement_statement" in evidence_types:
+            evidence_score = 5
+        elif "stolen_data_sample" in evidence_types and source_reliability in ("high", "very_high"):
+            evidence_score = 4
+        elif source_reliability == "high" and "reputable_media_reporting" in evidence_types:
+            evidence_score = 3
+        elif "leak_site_post" in evidence_types or "screenshots" in evidence_types:
+            evidence_score = 2
+        elif "threat_actor_claim" in evidence_types:
+            evidence_score = 1
+        else:
+            evidence_score = 0
+
+        # 5. Confidence Level
+        confidence = "low"
+        if evidence_score >= 4 or source_reliability == "very_high":
+            confidence = "high"
+        elif evidence_score >= 2 or source_reliability == "high":
+            confidence = "medium"
+        else:
+            confidence = "low"
+
+        # 6. Company Response Conceptual Status
+        comp_resp = str(article.get("company_response") or "").lower()
+        company_response_status = "no_response"
+        if any(k in comp_resp for k in ["confirmed", "identified unauthorized access", "notified authorities"]):
+            company_response_status = "confirmed"
+        elif any(k in comp_resp for k in ["denied", "no evidence of compromise", "disputes the claim", "blocked"]):
+            company_response_status = "denied"
+        elif any(k in comp_resp for k in ["investigating", "working with forensic experts"]):
+            company_response_status = "investigating"
+        elif any(k in comp_resp for k in ["limited number of systems", "partially"]):
+            company_response_status = "partially_confirmed"
+
+        # 7. Conflict Detection
+        conflicting_claims = False
+        if "threat_actor_claim" in evidence_types and company_response_status == "denied":
+            conflicting_claims = True
+
+        # 8. Claim Status Enforcer (Denial always has absolute precedence over claims)
+        if company_response_status == "denied":
+            final_claim_status = "denied"
+        elif company_response_status == "confirmed" or ("regulatory_filing" in evidence_types and company_response_status != "denied"):
+            final_claim_status = "confirmed"
+        elif evidence_score >= 5 and company_response_status != "denied":
+            final_claim_status = "confirmed"
+        else:
+            final_claim_status = "claimed"
+
+        return {
+            "source_type": source_type,
+            "source_reliability": source_reliability,
+            "evidence_types": evidence_types,
+            "evidence_score": evidence_score,
+            "confidence": confidence,
+            "company_response_status": company_response_status,
+            "conflicting_claims": conflicting_claims,
+            "claim_status": final_claim_status
+        }

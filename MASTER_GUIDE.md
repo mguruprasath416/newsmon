@@ -443,5 +443,34 @@ A new alert is dispatched for an existing incident **only upon materially new in
 $$\text{DETECT} \rightarrow \text{CLASSIFY} \rightarrow \text{VALIDATE} \rightarrow \text{CORRELATE} \rightarrow \text{DEDUPLICATE} \rightarrow \text{ASSESS UPDATE} \rightarrow \text{ROUTE} \rightarrow \text{DISPATCH}$$
 > **"One real incident $\rightarrow$ one useful alert."**
 
+---
+
+## 13. Source Reliability, Evidence Scoring & Claim Verification Framework
+
+Enforces transparent, evidence-based threat intelligence verification across all ingested intelligence:
+
+### 1. Source Classification & Reliability Tiers
+- **VERY HIGH:** `official_company`, `government`, `regulator` (SEC filings), `law_enforcement`, `cert`.
+- **HIGH:** `security_vendor` (Mandiant, CrowdStrike, Recorded Future), `reputable_media` (BleepingComputer, Reuters, TechCrunch).
+- **MEDIUM:** `security_researcher`, established independent investigative blogs.
+- **VERY LOW:** `threat_actor` (dark web leak sites), `social_media` (unverified X/Telegram posts).
+
+### 2. Evidence Strength Scale (0–5)
+- **Score 5:** Official company statement, regulatory disclosure (SEC 8-K), or law-enforcement indictment.
+- **Score 4:** Validated technical forensic evidence or confirmed stolen data samples reported by tier-1 cybersecurity outlets.
+- **Score 3:** Reputable media investigation with named sources.
+- **Score 2:** Leak-site listings, proof-of-breach screenshots, or single-source claims.
+- **Score 1:** Unsubstantiated threat actor claim.
+- **Score 0:** Speculation or theoretical vulnerability.
+
+### 3. Claim, Confirmation & Denial Precedence
+- **Denial Precedence:** If an affected organization explicitly denies a claim, `claim_status` is locked to `"denied"` and `conflicting_claims = true`.
+- **Unverified Threat Actor Claims:** Preserved strictly as `claim_status = "claimed"`, `confidence = "low"`, and `threat_actor = "[Named Group]"`.
+- **Preserve Provenance:** If threat actors claim 5,000,000 records and the company later confirms 100,000 records, both figures are preserved in their respective provenance fields rather than merged.
+
+### 4. Verification Hierarchy
+$$\text{SOURCE} \rightarrow \text{EVIDENCE} \rightarrow \text{CLAIM} \rightarrow \text{CORROBORATION} \rightarrow \text{COMPANY RESPONSE} \rightarrow \text{CONFIDENCE} \rightarrow \text{CLAIM STATUS} \rightarrow \text{SEVERITY} \rightarrow \text{TEAM ALERT}$$
+
+
 
 
