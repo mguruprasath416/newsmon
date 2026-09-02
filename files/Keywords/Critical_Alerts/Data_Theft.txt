@@ -1,20 +1,25 @@
-data stolen
-data theft
-data stolen from
-stolen customer data
-stolen employee data
-stolen corporate data
+customer data stolen
+employee data stolen
+patient data stolen
+financial data stolen
+corporate data stolen
 sensitive data stolen
+database stolen
 customer records stolen
 employee records stolen
-personal data stolen
-financial data stolen
+patient records stolen
 medical records stolen
-patient data stolen
-database stolen
 database exfiltrated
-data exfiltration
 mass data exfiltration
 large-scale data theft
-information stolen
-records stolen
+confirms data theft
+stolen customer database
+stolen database published
+stolen credentials exfiltrated
+sensitive files exfiltrated
+customer information stolen from
+exfiltrated sensitive records
+exfiltrated corporate documents
+exfiltrated customer data
+data stolen in cyberattack
+records stolen in breach

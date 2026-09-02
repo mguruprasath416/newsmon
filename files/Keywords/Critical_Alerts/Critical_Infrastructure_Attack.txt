@@ -1,19 +1,21 @@
-critical infrastructure attack
 critical infrastructure cyberattack
-critical infrastructure compromised
-power grid attack
-electric grid attack
+critical infrastructure attack hits
+power grid cyberattack
+electric grid cyberattack
 power plant cyberattack
 energy infrastructure attack
-water infrastructure attack
+oil pipeline cyberattack
+gas pipeline cyberattack
 water utility cyberattack
-telecom infrastructure attack
-telecommunications attack
-hospital infrastructure attack
-transportation infrastructure attack
-airport cyberattack
-railway cyberattack
-pipeline cyberattack
+water treatment facility cyberattack
+telecom infrastructure cyberattack
+hospital infrastructure cyberattack
+hospital diverted ambulances due to cyberattack
+transportation infrastructure cyberattack
+airport operations disrupted by cyberattack
+railway systems disrupted by cyberattack
 nuclear facility cyberattack
-critical infrastructure ransomware
-critical infrastructure breach
+SCADA systems compromised in attack
+industrial control systems compromised
+OT network compromised in cyberattack
+emergency dispatch 911 disrupted by cyberattack

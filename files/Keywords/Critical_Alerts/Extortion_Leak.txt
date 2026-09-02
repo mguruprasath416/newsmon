@@ -1,22 +1,20 @@
-data leak
-major data leak
-massive data leak
-mass data leak
-company data leak
-corporate data leak
-customer data leak
-employee data leak
-healthcare data leak
-patient data leak
 threat actor claims breach
 hacker claims breach
+threat actor claims data theft
 hacker claims data theft
 threat group claims data theft
-extortion claim
-extortion attack
-data extortion
-leak site
-data posted online
-stolen data published
-stolen data leaked
-breached data published
+extortion gang threatens to publish
+extortion gang publishes stolen data
+threat actor leaks corporate database
+stolen corporate data published on dark web
+stolen corporate database leaked online
+stolen database put up for sale
+listed on ransomware leak site
+added to dark web leak site
+victim added to leak site
+threat actor releases stolen employee data
+threat actor releases stolen customer database
+data extortion demand issued
+threat actor publishes proof of breach
+proof of hack published on dark web forum
+ransomware extortion site lists company

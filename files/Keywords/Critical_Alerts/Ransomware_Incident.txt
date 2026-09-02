@@ -1,23 +1,25 @@
-ransomware attack
-ransomware hit
-ransomware incident
-ransomware victim
+ransomware attack hits
+hit by ransomware attack
 company hit by ransomware
 organization hit by ransomware
 hospital hit by ransomware
 bank hit by ransomware
+school district hit by ransomware
 government hit by ransomware
-ransomware outbreak
-ransomware infection
-systems encrypted
-systems were encrypted
-files encrypted
-network encrypted
+utility hit by ransomware
+confirms ransomware attack
+encrypted by ransomware
+systems encrypted by ransomware
+production systems encrypted
+clinical systems encrypted
+internal servers encrypted
+files encrypted by attackers
 operations disrupted by ransomware
-ransom demand
-ransomware extortion
-double extortion
-triple extortion
-ransomware data leak
-ransomware data theft
-ransomware data exfiltration
+ransomware forces systems offline
+ransomware double extortion
+ransomware triple extortion
+ransomware group claims responsibility
+ransomware group lists victim
+ransomware victims added to leak site
+ransomware gang demands ransom
+ransomware outbreak shuts down

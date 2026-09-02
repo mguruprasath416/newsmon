@@ -718,7 +718,8 @@ class TeamAlertDecisionEngine:
         has_data_theft = bool(claimed_records) or any(k in full_text for k in [
             "records stolen", "data stolen", "stolen customer data", "stolen employee data",
             "patient records", "customer database", "database exfiltrated", "mass data exfiltration",
-            "stolen credentials", "data theft", "database stolen", "exfiltrated customer"
+            "stolen credentials", "data theft", "database stolen", "exfiltrated customer", "data exfiltrated",
+            "exfiltrated"
         ])
         if has_data_theft:
             evidence_score += 35
@@ -729,7 +730,7 @@ class TeamAlertDecisionEngine:
             "corporate network compromised", "company compromised", "enterprise network compromised",
             "organization compromised", "internal systems compromised", "unauthorized access to internal",
             "unauthorized access to company", "attackers gained access", "threat actors gained access",
-            "compromised corporate", "bank compromised", "company breached", "organization breached"
+            "compromised corporate", "bank compromised", "company breached", "organization breached", "was breached"
         ])
         if has_compromise:
             evidence_score += 30
@@ -744,7 +745,16 @@ class TeamAlertDecisionEngine:
             evidence_score += 30
             evidence_factors.append("Ransomware Deployment / Systems Encrypted")
 
-        # Factor 4: Critical Infrastructure / Essential Services Impact (+30)
+        # Factor 4: Extortion / Leak Site Listing (+25)
+        has_extortion = any(k in full_text for k in [
+            "leak site", "extortion site", "proof of breach", "proof samples", "threat actor claims breach",
+            "hacker claims breach", "ransomware group claims", "listed on leak site", "added to leak site"
+        ])
+        if has_extortion:
+            evidence_score += 25
+            evidence_factors.append("Extortion Leak Site Listing / Proof Samples")
+
+        # Factor 5: Critical Infrastructure / Essential Services Impact (+30)
         has_infra = any(k in full_text for k in [
             "critical infrastructure", "power grid", "electric grid", "water utility",
             "hospital infrastructure", "emergency operations", "pipeline cyberattack", "telecom network"
@@ -753,7 +763,7 @@ class TeamAlertDecisionEngine:
             evidence_score += 30
             evidence_factors.append("Critical Infrastructure / Essential Services Impact")
 
-        # Factor 5: Major Service Disruption / Operational Outage (+25)
+        # Factor 6: Major Service Disruption / Operational Outage (+25)
         has_disruption = any(k in full_text for k in [
             "service disruption", "major service disruption", "disrupted operations",
             "disrupting services", "network outage caused by", "systems taken offline", "operations disrupted",
@@ -763,14 +773,14 @@ class TeamAlertDecisionEngine:
             evidence_score += 25
             evidence_factors.append("Major Operational / Service Disruption")
 
-        # Factor 6: Identified Target Organization (+20)
-        comp = extract_breached_company(art)
+        # Factor 7: Identified Target Organization (+20)
+        comp = art.get("target_company") or extract_breached_company(art)
         has_victim_company = bool(comp and comp not in ("Not Specified", "Unknown", "Target Organization"))
         if has_victim_company:
             evidence_score += 20
             evidence_factors.append(f"Target Organization: {comp}")
 
-        # Factor 7: Confirmed Disclosure vs Unverified Claim (+25 for confirmed, +15 for attributed claim)
+        # Factor 8: Confirmed Disclosure vs Unverified Claim (+25 for confirmed, +15 for attributed claim)
         claim_status = (art.get("claim_status") or "").lower()
         if claim_status == "confirmed" or any(k in full_text for k in ["sec filing confirms", "company confirmed", "disclosed breach", "official statement confirms", "confirmed data breach", "confirmed corporate"]):
             evidence_score += 25
@@ -779,7 +789,7 @@ class TeamAlertDecisionEngine:
             evidence_score += 15
             evidence_factors.append("Attributed Actor Claim")
 
-        # Factor 8: Named Threat Actor Attribution (+20)
+        # Factor 9: Named Threat Actor Attribution (+20)
         actor = extract_threat_actor(art)
         if actor != "Unknown":
             evidence_score += 20
