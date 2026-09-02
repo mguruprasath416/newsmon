@@ -140,7 +140,7 @@ class AIEnrichmentService:
         if not api_key:
             return None
 
-        model = getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
+        model = getattr(settings, "GEMINI_MODEL", "gemini-3-flash-preview") or "gemini-3-flash-preview"
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
         prompt = f"{SYSTEM_PROMPT}\n\nTitle: {title}\n\nBody:\n{body_text[:6000]}"

@@ -220,7 +220,7 @@ class LensAnalysisService:
         if settings.GEMINI_API_KEY:
             try:
                 import httpx
-                model = getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
+                model = getattr(settings, "GEMINI_MODEL", "gemini-3-flash-preview") or "gemini-3-flash-preview"
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={settings.GEMINI_API_KEY}"
                 prompt = (
                     "You are a senior CTI analyst. Synthesize this threat advisory into a concise executive summary "

@@ -71,7 +71,7 @@ class Settings(BaseSettings):
 
     # ── Google Gemini API ─────────────────────────────────────────────
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_MODEL: str = "gemini-3-flash-preview"
 
     # ── OpenAI ────────────────────────────────────────────────────────
     OPENAI_API_KEY: str = ""

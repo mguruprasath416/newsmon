@@ -92,8 +92,7 @@ Return a JSON object with:
         # ── 1. Google Gemini ──────────────────────────────────────────
         if settings.GEMINI_API_KEY:
             try:
-                import httpx
-                model = getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
+                model = getattr(settings, "GEMINI_MODEL", "gemini-3-flash-preview") or "gemini-3-flash-preview"
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={settings.GEMINI_API_KEY}"
                 payload = {
                     "contents": [{"parts": [{"text": prompt}]}],
