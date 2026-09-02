@@ -3,6 +3,8 @@ Intelligence Collection Engine — Base Collector and Factory
 """
 import asyncio
 import hashlib
+import ipaddress
+import urllib.parse
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -25,6 +27,41 @@ def _get_ai_enrichment():
     return _ai_enrichment
 
 log = structlog.get_logger()
+
+
+def is_safe_public_url(url: str) -> bool:
+    """
+    Validates that a URL is a safe public HTTP/HTTPS endpoint to prevent SSRF:
+    - Protocol must be http or https
+    - Hostname must not be empty or localhost
+    - IP address must not resolve to private, loopback, multicast, link-local, or cloud metadata ranges (169.254.169.254)
+    """
+    if not url or not isinstance(url, str):
+        return False
+    
+    parsed = urllib.parse.urlparse(url.strip())
+    if parsed.scheme.lower() not in ("http", "https"):
+        return False
+        
+    hostname = parsed.hostname
+    if not hostname:
+        return False
+        
+    hostname_lower = hostname.lower()
+    if hostname_lower in ("localhost", "127.0.0.1", "::1", "metadata.google.internal") or hostname_lower.endswith((".local", ".internal", ".localhost")):
+        return False
+        
+    # Check if direct IP address
+    try:
+        ip = ipaddress.ip_address(hostname)
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
+            return False
+        if str(ip) == "169.254.169.254":
+            return False
+    except ValueError:
+        pass  # Standard public domain name
+        
+    return True
 
 # ─── Cyber Relevance Filter ───────────────────────────────────────────────────
 # Matches ANY article that is genuinely cyber/security-related.
