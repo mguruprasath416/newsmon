@@ -144,17 +144,20 @@ def determine_breach_status(article: Dict[str, Any]) -> str:
     if any(k in text for k in [
         "denied", "denies", "no evidence of breach", "no evidence of a breach",
         "found no breach", "unaffected", "no operational impact", "debunked",
-        "denies claim", "fake breach claim", "no compromise"
+        "denies claim", "fake breach claim", "no compromise", "zero unauthorized access"
     ]):
         return "DENIED"
 
+    # Confirmed requires explicit admission or official confirmation
     if any(k in text for k in [
-        "confirms", "confirmed", "verified", "acknowledged", "admitted",
-        "disclosed breach", "notified affected", "investigating incident",
-        "sec filing confirms", "statement confirms", "suffered data breach"
+        "confirms breach", "confirmed breach", "verified breach", "acknowledged unauthorized access",
+        "admitted breach", "disclosed breach", "sec filing", "sec 8-k",
+        "official statement confirms", "confirmed data breach", "suffered data breach",
+        "confirmed that", "confirmed an intrusion", "officials confirmed"
     ]):
         return "CONFIRMED"
 
+    # Mere investigation statement without admission remains CLAIMED
     return "CLAIMED"
 
 
@@ -2048,8 +2051,19 @@ class TeamsService:
     @classmethod
     async def dispatch_cyberpulse_alert(cls, event: Dict[str, Any]) -> bool:
         """
-        Dispatch a High-Priority CyberPulse alert card to the configured Microsoft Teams webhook.
+        Dispatch a High-Priority CyberPulse alert card to the configured Microsoft Teams webhook
+        ONLY if the viral event qualifies as a Critical Actionable Incident under the 4-Stage Gate.
+        A CVE or patch advisory reported by 50+ sources remains strictly Website Only.
         """
+        if not is_critical_actionable_incident(event):
+            log.info(
+                "CyberPulse Teams dispatch suppressed: Event is viral on website, but does not meet Critical Incident 4-Stage Gate (WEBSITE_ONLY)",
+                title=event.get("title", "")[:60],
+                event_id=event.get("event_id"),
+                sources=event.get("source_count")
+            )
+            return False
+
         webhook_url = (
             getattr(settings, "TEAMS_WEBHOOK_URL_CYBER_PULSE", "") or
             getattr(settings, "TEAMS_WEBHOOK_URL", "") or

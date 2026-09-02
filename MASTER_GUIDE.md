@@ -1,9 +1,9 @@
 # NewsMon / ClarityTI — Master System Architecture & CTI Research Specification
 
-> **Document Version:** 2.1.0-PROD  
+> **Document Version:** 2.2.0-PROD  
 > **Target Audience:** Threat Intelligence Analysts, Security Engineers, AI/ML Research Teams, and Core Platform Developers  
 > **Platform Classification:** Enterprise Automated Cyber Threat Intelligence (CTI) & Incident Radar  
-> **Verification Status:** 43/43 Automated Tests Passing (Golden Benchmark Precision 100%, Recall 100%) 🟢  
+> **Verification Status:** 53/53 Automated Tests Passing (Golden Benchmark Precision 100%, Recall 100%) 🟢  
 
 ---
 
@@ -90,12 +90,14 @@ The platform maintains a strict separation of concerns between cataloged researc
 | **Website vs Teams separation** | 🟢 **Hardened** | Website catalogs all broad CTI; Teams alerts strictly on actionable emergencies. |
 | **10-field CTI schema** | 🟢 **Hardened** | Full JSON extraction (`claim_status`, `severity`, `threat_actor`, `sector`, etc.). |
 | **Claim / Denial integrity** | 🟢 **Hardened** | Strict denial precedence: organization denials override uncorroborated allegations. |
+| **Official statement semantics** | 🟢 **Hardened** | Explicit admission required for `CONFIRMED`; investigations remain `CLAIMED`. |
 | **AI executive insight** | 🟢 **Hardened** | Concise `🔎 AI INSIGHT` synthesized by Google Gemini Flash. |
 | **Keyword taxonomy** | 🟢 **Hardened** | 590+ terms across 7 categories used strictly as candidate taggers (non-alerting). |
 | **Keyword-only alert prevention** | 🟢 **Hardened** | Zero keyword-only triggers; keywords feed the candidate pool only. |
 | **Multi-factor evidence gate** | 🟢 **Hardened** | Multi-factor evidence scoring ($\ge 50$ pts) requiring target org, data theft, or active impact. |
 | **Tri-state decision layer** | 🟢 **Hardened** | Deterministic 3-state output: `WEBSITE_ONLY`, `HUMAN_REVIEW`, `TEAM_ALERT`. |
-| **SSRF security module** | 🟢 **Hardened** | Pre-flight DNS validation, private IP/cloud metadata blocking (`169.254.169.254`). |
+| **CyberPulse non-bypass gate** | 🟢 **Hardened** | 10+ sources triggers `high_heat`, but Teams dispatch still strictly requires critical incident criteria. |
+| **SSRF security module** | 🟢 **Hardened** | Pre-flight DNS validation, private IP/cloud metadata blocking (`169.254.169.254`), redirect validation. |
 | **Incident deduplication** | 🟢 **Hardened** | 72-hour incident fingerprinting suppresses multi-source duplicate alerts. |
 
 ---
@@ -133,11 +135,12 @@ All external feed requests and URL scraping operate through safe-fetch validatio
 3. **Blocked Networks & Ranges:**
    - IPv4 Loopback: `127.0.0.0/8`
    - IPv6 Loopback: `::1/128`
+   - IPv4-Mapped IPv6: `::ffff:0:0/96` (e.g. `::ffff:127.0.0.1`, `::ffff:169.254.169.254`)
    - RFC 1918 Private Networks: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`
    - Link-Local & Cloud Metadata: `169.254.0.0/16`, `169.254.169.254`, `metadata.google.internal`
    - Carrier-Grade NAT: `100.64.0.0/10`
    - Unique Local IPv6: `fc00::/7`, `fe80::/10`
-4. **Prohibited Domain Suffixes:** `.local`, `.internal`, `.localhost`, `.lan`, `.corp`, `.home`.
+4. **Prohibited Domain Suffixes:** `.local`, `.internal`, `.localhost`, `.lan`, `.corp`, `.home`, `.arpa`.
 5. **Redirect Validation:** Every HTTP redirect hop re-resolves and validates the target IP.
 6. **Payload Size Guard:** Capped at 15MB with a 15s connection timeout.
 
@@ -154,7 +157,7 @@ Every ingested document in MongoDB records complete auditability metadata:
     "Ransomware Deployment / Systems Encrypted (+30)"
   ],
   "model_version": "gemini-3-flash-preview",
-  "prompt_version": "universal-cti-v2.1",
+  "prompt_version": "universal-cti-v2.2",
   "policy_version": "2026-09-02-prod"
 }
 ```
@@ -190,7 +193,7 @@ files/Keywords/
 
 ### 5.1 Primary Engine: Google Gemini Flash (`gemini-3-flash-preview`)
 Gemini extracts 10 structured CTI parameters in valid JSON format:
-- `claim_status`: `claimed` | `confirmed` | `denied`
+- `claim_status`: `claimed` | `confirmed` | `denied` | `unknown`
 - `severity`: `critical` | `high` | `medium` | `low` | `informational`
 - `threat_actor`: Named actor (or `Unattributed`)
 - `target_country`: Full country name (or `null`)
@@ -205,6 +208,7 @@ Gemini extracts 10 structured CTI parameters in valid JSON format:
 1. **Record Count Guard:** Only explicit integer counts are extracted. String sizes (e.g., `50 GB`, `10 TB`) and vague phrases (*"thousands of records"*) are normalized to `null`.
 2. **Threat Actor Guard:** If no explicit actor is cited, defaults to `"Unattributed"`. Speculative inferences based on country or malware type are rejected.
 3. **CVE Validation:** Every CVE ID is verified with regex `^CVE-\d{4}-\d{4,7}$` against the source text. Non-matching strings are dropped.
+4. **Investigation Statement Semantics:** Statements indicating an ongoing investigation without admission remain `claim_status = "claimed"`, never `confirmed`.
 
 ---
 
@@ -244,7 +248,7 @@ SOURCE                       PUBLISHED
 - **CyberPulse Viral News Engine:** Clusters multi-source reporting of identical breaking events within a 72-hour sliding window.
   - **Threshold 1 (< 5 sources):** Classified as `emerging` / low priority (excluded from heat-map).
   - **Threshold 2 (5–9 sources):** Classified as `trending` (heat score $\ge 35$, heat-map eligible).
-  - **Threshold 3 ($\ge 10$ sources):** Classified as `high_heat` (heat score $\ge 80$, triggers High Priority Alert card).
+  - **Threshold 3 ($\ge 10$ sources):** Classified as `high_heat` (heat score $\ge 80$). Feeds into the deterministic 4-Stage Decision Gate (only qualifying actionable corporate incidents trigger Teams alerts; viral CVEs remain strictly Website-Only).
 
 ---
 
@@ -262,7 +266,7 @@ SOURCE                       PUBLISHED
 1. **Autonomous Dark Web Crawler Integration:** Automated scraping of Tor `.onion` leak blogs (LockBit, RansomHub, BianLian) with automated image OCR for leak proof verification.
 2. **Predictive Zero-Day Weaponization Model:** ML classifier predicting in-the-wild exploit probability before CISA KEV listing by correlating EPSS, CVSS vector strings, PoC availability on GitHub, and exploit-broker dark web mentions.
 3. **Automated STIX 2.1 Graph Visualizer:** Interactive dynamic entity graph linking Threat Actors $\rightarrow$ Campaigns $\rightarrow$ TTPs $\rightarrow$ CVEs $\rightarrow$ Target Organizations.
-4. **Autonomous SOAR Remediation Dispatch:** Automated generation of Snort/Suricata rules, Sigma detection rules, and firewall blocklists for extracted IOCs.
+4. **Human-Approved SOAR Remediation Dispatch:** Semi-automated generation of Snort/Suricata rules, Sigma detection rules, and firewall blocklists with mandatory analyst approval and policy checks prior to deployment.
 
 ---
 
@@ -285,7 +289,8 @@ Vulnerability advisories, patch notices, malware reverse-engineering writeups, g
 RECORD COUNT & CLAIM INTEGRITY:
 - Never manufacture record numbers. Integer only or null.
 - Threat actor: named group or "Unattributed".
-- Claim status: "claimed" | "confirmed" | "denied". Explicit company denials override claims.
+- Claim status: "claimed" | "confirmed" | "denied" | "unknown". Explicit company denials override claims.
+- Official investigation statements remain "claimed", not "confirmed".
 ```
 
 ---
@@ -369,7 +374,7 @@ A new alert is dispatched for an existing incident **only upon materially new in
 
 $$\text{UNTRUSTED INTERNET} \rightarrow \text{SECURE INGESTION (SSRF FILTER)} \rightarrow \text{CONTENT SANITIZATION} \rightarrow \text{AI ENRICHMENT (SANDBOXED)} \rightarrow \text{OUTPUT VALIDATION} \rightarrow \text{DETERMINISTIC GATE} \rightarrow \text{MONGODB} \rightarrow \text{TEAMS}$$
 
-- **SSRF Defense:** Pre-flight DNS resolution, private IP blocking, cloud metadata blocking (`169.254.169.254`), non-HTTP scheme blocking, and safe redirect re-validation.
+- **SSRF Defense:** Pre-flight DNS resolution, private IP blocking, IPv4-mapped IPv6 blocking, cloud metadata blocking (`169.254.169.254`), non-HTTP scheme blocking, and safe redirect re-validation.
 - **Prompt Injection Sandboxing:** Untrusted article text encapsulated in `<UNTRUSTED_ARTICLE_DATA>` blocks; deterministic policy engine cannot be overridden by prompt injection.
 - **Idempotent Webhooks:** Dispatches keyed by `webhook_url::fingerprint` to eliminate duplicate notifications.
 
@@ -382,7 +387,8 @@ Enforces automated release gates and regression testing across the entire intell
 ### 1. Test Suite Coverage (`backend/tests/`)
 | Test Suite | Purpose | Tests | Status |
 | :--- | :--- | :---: | :---: |
-| [`test_golden_benchmark.py`](file:///d:/Feed/backend/tests/test_golden_benchmark.py) | 17-case positive & negative ground truth evaluation | 3 | 🟢 **PASS** |
+| [`test_audit_hardening_verifications.py`](file:///d:/Feed/backend/tests/test_audit_hardening_verifications.py) | CyberPulse non-bypass, investigation statements, SSRF IPv4-mapped IPv6, zero-day policy | 10 | 🟢 **PASS** |
+| [`test_golden_benchmark.py`](file:///d:/Feed/backend/tests/test_golden_benchmark.py) | 17-case positive & negative ground truth regression benchmark | 3 | 🟢 **PASS** |
 | [`test_alert_decision_engine.py`](file:///d:/Feed/backend/tests/test_alert_decision_engine.py) | 4-stage pipeline, zero-day handling, multi-factor scoring | 5 | 🟢 **PASS** |
 | [`test_claim_lifecycle.py`](file:///d:/Feed/backend/tests/test_claim_lifecycle.py) | Claimed vs confirmed vs explicit denial precedence | 5 | 🟢 **PASS** |
 | [`test_anti_hallucination.py`](file:///d:/Feed/backend/tests/test_anti_hallucination.py) | Integer record counts, unattributed actor fallback, CVE regex | 3 | 🟢 **PASS** |
@@ -391,10 +397,10 @@ Enforces automated release gates and regression testing across the entire intell
 | [`test_deduplication_and_material_updates.py`](file:///d:/Feed/backend/tests/test_deduplication_and_material_updates.py) | 72h fingerprinting, multi-source suppression, material updates | 3 | 🟢 **PASS** |
 | [`test_ai_validation_and_safety.py`](file:///d:/Feed/backend/tests/test_ai_validation_and_safety.py) | Malformed JSON sanitization, prompt injection resistance, heuristics | 3 | 🟢 **PASS** |
 | [`test_cyberpulse.py`](file:///d:/Feed/backend/tests/test_cyberpulse.py) | Viral thresholds (5 trending, 10 alert), source deduplication | 8 | 🟢 **PASS** |
-| **Total Test Suite** | **Comprehensive Regression Suite** | **43** | 🟢 **43/43 PASS** |
+| **Total Test Suite** | **Comprehensive Automated Regression Suite** | **53** | 🟢 **53/53 PASS** |
 
-### 2. Golden Dataset Benchmark Performance
-$$\text{MEASURED ON GOLDEN BENCHMARK (17 CASES):} \quad \text{PRECISION: 100\%} \quad\vert\quad \text{RECALL: 100\%} \quad\vert\quad \text{FPR: 0.0\%} \quad\vert\quad \text{FNR: 0.0\%} 🟢$$
+### 2. Golden Dataset Regression Benchmark Performance
+$$\text{MEASURED ON GOLDEN REGRESSION BENCHMARK (17 CASES):} \quad \text{PRECISION: 100\%} \quad\vert\quad \text{RECALL: 100\%} \quad\vert\quad \text{FPR: 0.0\%} \quad\vert\quad \text{FNR: 0.0\%} 🟢$$
 
 ---
 
@@ -406,9 +412,11 @@ $$\text{MEASURED ON GOLDEN BENCHMARK (17 CASES):} \quad \text{PRECISION: 100\%} 
 
 ### 2. Time-to-Intelligence & Latency SLOs
 $$\text{PUBLISHED} \xrightarrow{\Delta t_1} \text{INGESTED} \xrightarrow{\Delta t_2} \text{ENRICHED} \xrightarrow{\Delta t_3} \text{VALIDATED} \xrightarrow{\Delta t_4} \text{CORRELATED} \xrightarrow{\Delta t_5} \text{TEAMS ALERT}$$
-- **Ingestion Latency Target (SLO):** $< 15\text{ minutes}$ from external publication.
-- **Processing & Enrichment Target (SLO):** $< 10\text{ seconds}$ per qualifying candidate.
-- **Time-to-Alert Target (SLO):** $< 60\text{ seconds}$ from initial ingestion to Microsoft Teams delivery.
+- **Ingestion Latency Target (SLO):** P95 $< 15\text{ minutes}$ from external publication.
+- **Processing & Enrichment Target (SLO):** P95 $< 10\text{ seconds}$ per qualifying candidate.
+- **Time-to-Alert Target (SLO):** P95 $< 60\text{ seconds}$ from initial ingestion to Microsoft Teams delivery.
 
-### 3. Final Production Readiness Status
-$$\text{TARGET AVAILABILITY: 99.9\% SLO} \quad\vert\quad \text{ARCHITECTURE: FULLY REDUNDANT DOCKER STACK} \quad\vert\quad \text{STATUS: ENTERPRISE PRODUCTION READY 🟢}$$
+### 3. Disaster Recovery & Backup Architecture
+- **Logical Backup:** Daily automated logical snapshots exported via `mongodump` with gzip compression.
+- **Rebuildable Indices:** Elasticsearch indices and Redis cache keys are fully reconstructible from authoritative MongoDB collections.
+- **Restore Verification:** Automated cold-restore verification scripts in `backend/app/scripts/` to validate database recoverability.

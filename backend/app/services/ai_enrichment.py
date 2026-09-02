@@ -555,32 +555,41 @@ class SourceReliabilityEngine:
 
         # 3. Evidence Types Identification
         evidence_types = []
-        if any(k in full_text for k in ["sec 8-k", "regulatory filing", "filing with the sec"]):
+        if any(k in full_text for k in ["sec 8-k", "regulatory filing", "filing with the sec", "notified data protection authority"]):
             evidence_types.append("regulatory_filing")
-        if any(k in full_text for k in ["official statement", "press release", "company confirmed", "spokesperson stated"]):
-            evidence_types.append("official_statement")
-        if any(k in full_text for k in ["law enforcement statement", "indictment", "police confirmed"]):
+        if any(k in full_text for k in [
+            "official statement confirms", "company confirmed", "press release confirmed",
+            "spokesperson confirmed", "confirmed unauthorized access", "admitted breach", "disclosed today that threat actors compromised"
+        ]):
+            evidence_types.append("official_confirmation_statement")
+        elif any(k in full_text for k in [
+            "is investigating", "investigating reports", "investigating possible", "working with forensic experts",
+            "spokesperson stated they are investigating", "assessing potential impact"
+        ]):
+            evidence_types.append("official_investigation_statement")
+
+        if any(k in full_text for k in ["law enforcement statement", "indictment", "police confirmed", "fbi statement"]):
             evidence_types.append("law_enforcement_statement")
-        if any(k in full_text for k in ["dark web leak site", "extortion site", "listed on leak site"]):
+        if any(k in full_text for k in ["dark web leak site", "extortion site", "listed on leak site", "added to extortion portal"]):
             evidence_types.append("leak_site_post")
-        if any(k in full_text for k in ["sample data", "data sample", "sample files", "proof of hack"]):
+        if any(k in full_text for k in ["sample data", "data sample", "sample files", "proof of hack", "sample records published"]):
             evidence_types.append("stolen_data_sample")
         if any(k in full_text for k in ["screenshot", "screenshots of active directory", "screenshots"]):
             evidence_types.append("screenshots")
-        if any(k in full_text for k in ["threat actor claims", "ransomware group claims", "hackers claim"]):
+        if any(k in full_text for k in ["threat actor claims", "ransomware group claims", "hackers claim", "claims to have breached"]):
             evidence_types.append("threat_actor_claim")
         if not evidence_types:
             evidence_types.append("reputable_media_reporting" if source_reliability == "high" else "none")
 
         # 4. Evidence Strength (0-5)
         evidence_score = 1
-        if "regulatory_filing" in evidence_types or "official_statement" in evidence_types or "law_enforcement_statement" in evidence_types:
+        if "regulatory_filing" in evidence_types or "official_confirmation_statement" in evidence_types or "law_enforcement_statement" in evidence_types:
             evidence_score = 5
         elif "stolen_data_sample" in evidence_types and source_reliability in ("high", "very_high"):
             evidence_score = 4
         elif source_reliability == "high" and "reputable_media_reporting" in evidence_types:
             evidence_score = 3
-        elif "leak_site_post" in evidence_types or "screenshots" in evidence_types:
+        elif "leak_site_post" in evidence_types or "screenshots" in evidence_types or "official_investigation_statement" in evidence_types:
             evidence_score = 2
         elif "threat_actor_claim" in evidence_types:
             evidence_score = 1
@@ -605,9 +614,9 @@ class SourceReliabilityEngine:
             "blocked the attack", "false claim"
         ]):
             company_response_status = "denied"
-        elif any(k in comp_resp for k in ["confirmed", "identified unauthorized access", "notified authorities"]):
+        elif any(k in comp_resp for k in ["confirmed", "identified unauthorized access", "notified authorities", "admitted"]):
             company_response_status = "confirmed"
-        elif any(k in comp_resp for k in ["investigating", "working with forensic experts"]):
+        elif any(k in comp_resp for k in ["investigating", "working with forensic experts", "assessing"]):
             company_response_status = "investigating"
         elif any(k in comp_resp for k in ["limited number of systems", "partially"]):
             company_response_status = "partially_confirmed"
@@ -620,10 +629,10 @@ class SourceReliabilityEngine:
         # 8. Claim Status Enforcer (Denial always has absolute precedence over claims)
         if company_response_status == "denied":
             final_claim_status = "denied"
-        elif company_response_status == "confirmed" or ("regulatory_filing" in evidence_types and company_response_status != "denied"):
+        elif company_response_status == "confirmed" or "regulatory_filing" in evidence_types or "official_confirmation_statement" in evidence_types:
             final_claim_status = "confirmed"
-        elif evidence_score >= 5 and company_response_status != "denied":
-            final_claim_status = "confirmed"
+        elif company_response_status == "investigating" or "official_investigation_statement" in evidence_types:
+            final_claim_status = "claimed"
         else:
             final_claim_status = "claimed"
 
