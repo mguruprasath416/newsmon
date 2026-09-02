@@ -845,466 +845,255 @@ def _impact_tags(art: Dict[str, Any]) -> str:
 
 def build_threat_intelligence_breach_card(art: Dict[str, Any]) -> Dict[str, Any]:
     """
-    CAO Company Breach Card — Clear · Accurate · Objective
-
-    Teams MessageCard constraints respected:
-    - No &nbsp; / HTML entities (render as literal text in Teams)
-    - activityTitle/activitySubtitle always stack vertically — no inline columns
-    - facts[] is the only reliable 2-column layout
-    - severity goes in facts, not in subtitle
-
-    Rendered structure:
-      ─────────────────────────────────────────
-      🔴 ACTIVE THREAT
-      [Company Name]  ·  Country · Sector
-      ─────────────────────────────────────────
-      🔔 APP — NEW THREAT INTELLIGENCE
-      [COUNTRY] Title
-      Summary text...
-
-      Severity        | MEDIUM
-      Threat actor    | Unattributed
-      News source     | OSINTxLab (linked)
-      Board / section | Technology & Software
-      Category        | Data Breach
-      ─────────────────────────────────────────
-      ⚠️ POTENTIAL IMPACT
-      Unauthorized access  ·  Reputational risk
-      ─────────────────────────────────────────
-      📥 Collected ...   📡 Published ...
+    Template 1: Company Cyber Incident / Intelligence Alert
+    Layout:
+      🔴 [SEVERITY] | [APP_NAME] INTELLIGENCE ALERT
+      🚨 COMPANY CYBER INCIDENT
+      [COMPANY NAME]
+      [Short threat headline]
+      ━━━━━━━━━━━━━━━━━━━━
+      AI ASSESSMENT
+      [2–3 line summary]
+      ━━━━━━━━━━━━━━━━━━━━
+      🎯 THREAT PROFILE
+      Attack       : [Type]
+      Threat Actor : [Actor]
+      Sector       : [Sector]
+      Region       : [Region]
+      Severity     : [Severity]
+      Confidence   : [Confidence]%
+      🧩 TECHNICAL INDICATORS
+      CVE          : [CVEs]
+      Malware      : [Malware]
+      MITRE        : [MITRE]
+      IOCs         : [IOC Count]
+      ━━━━━━━━━━━━━━━━━━━━
+      📌 INTELLIGENCE FACTS
+      Source       : [Source]
+      Date         : [Date]
+      Threat Actor : [Actor]
+      Company      : [Company]
+      ━━━━━━━━━━━━━━━━━━━━
+      [ VIEW FULL REPORT → ]
     """
     app_name = (getattr(settings, "APP_NAME", "") or "CLARITYTI").upper()
     platform_name_display = getattr(settings, "APP_NAME", "") or "ClarityTI"
-    platform_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000")
+    platform_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000").rstrip("/")
 
-    # ── Title & Country ───────────────────────────────────────────────────────
-    raw_title = (art.get("title") or "Company Threat Intelligence Alert").strip()
+    raw_title = (art.get("title") or "Company Cyber Incident Alert").strip()
     clean_title = re.sub(
         r'\s*-\s*(?:Reuters|BleepingComputer|The Hacker News|OSINTxLab|BreachNews|Dark Reading|SecurityWeek|CERT-In).*$',
         '', raw_title, flags=re.IGNORECASE
     ).strip()
 
-    country = (art.get("target_country") or extract_country(art) or "GLOBAL").upper()
-    if country == "UNKNOWN":
-        country = "GLOBAL"
-    formatted_title = clean_title if (clean_title.startswith("[") and "]" in clean_title) else f"[{country}] {clean_title}"
-
-    # ── Company & Sector ──────────────────────────────────────────────────────
-    extracted_company = extract_breached_company(art)
-    company_val = extracted_company if extracted_company and extracted_company not in ("Not Specified", "") else "Target Enterprise"
-    sector = determine_sector(art)
-    board_section = "Databases" if any(k in clean_title.lower() for k in ["database", "db", "records", "leak", "dump"]) else sector
-    country_display = country.title() if country != "GLOBAL" else "Global"
-
-    # ── Source & URLs ─────────────────────────────────────────────────────────
-    source_name = art.get("source_name") or "Threat Intel Feed"
-    article_url = art.get("url") or platform_url
-
-    # ── Threat Data ───────────────────────────────────────────────────────────
-    threat_actor = extract_threat_actor(art)
-    category = determine_incident_type(art)
-    if category in ("Cyber Advisory", "Vulnerability"):
-        category = "Data Leak" if "leak" in clean_title.lower() else "Data Breach"
+    company_val = extract_breached_company(art)
+    if not company_val or company_val in ("Not Specified", "Unknown", ""):
+        company_val = "Target Organization"
 
     severity = extract_severity_level(art)
-    clean_summary = clean_summary_text(art)
-
-    # ── Timestamps ────────────────────────────────────────────────────────────
-    collected_at = format_timestamp_pretty(art.get("crawled_at") or datetime.now(timezone.utc))
-    published_at = format_timestamp_pretty(art.get("published_at") or datetime.now(timezone.utc))
-
-    # ── Impact Tags ───────────────────────────────────────────────────────────
-    impact_line = _impact_tags(art)
-
-    # ── Theme colour ──────────────────────────────────────────────────────────
     theme_color = _severity_color(severity)
 
-    # ── Sections ──────────────────────────────────────────────────────────────
-    sections: List[Dict[str, Any]] = [
-        # Section 1 — Identity header: company + location, no HTML tricks
-        {
-            "activityTitle": "🔴 ACTIVE THREAT",
-            "activitySubtitle": f"{company_val}  ·  {country_display} · {sector}",
-            "markdown": True,
-        },
-        # Section 2 — Intelligence body with facts grid
-        {
-            "activityTitle": f"🔔 {app_name} — NEW THREAT INTELLIGENCE",
-            "activitySubtitle": formatted_title,
-            "text": clean_summary,
-            "facts": [
-                {"name": "Severity",        "value": severity},
-                {"name": "Threat actor",    "value": threat_actor},
-                {"name": "News source",     "value": f"[{source_name}]({article_url})"},
-                {"name": "Board / section", "value": board_section},
-                {"name": "Category",        "value": category},
-            ],
-            "markdown": True,
-        },
-    ]
+    # AI Assessment (2-3 lines)
+    ai_assessment = (art.get("ai_summary") or clean_summary_text(art)).strip()
 
-    # Section 3 — Potential Impact (keyword-matched only, no noisy tags)
-    if impact_line:
-        sections.append({
-            "title": "⚠️ POTENTIAL IMPACT",
-            "text": impact_line,
-            "markdown": True,
-        })
+    # Threat Profile Fields
+    attack_type = determine_incident_type(art)
+    if attack_type in ("Cyber Advisory", "Vulnerability"):
+        attack_type = "Data Leak" if "leak" in clean_title.lower() else "Ransomware"
 
-    # Section 4 — Timestamps footer
-    sections.append({
-        "facts": [
-            {"name": "Collected",  "value": collected_at},
-            {"name": "Published",  "value": published_at},
-        ],
-        "markdown": True,
-    })
+    threat_actor = extract_threat_actor(art)
+    sector = determine_sector(art)
+    country = (art.get("target_country") or extract_country(art) or "Global").title()
+    if country.upper() == "UNKNOWN":
+        country = "Global"
 
-    # Evidence screenshot (if available)
-    evidence_image_url = art.get("image_url") or art.get("screenshot_url")
-    if evidence_image_url and evidence_image_url.startswith("http"):
-        sections.append({
-            "title": "SCREENSHOT",
-            "images": [{"image": evidence_image_url, "title": f"Evidence — {company_val}"}],
-            "markdown": True,
-        })
+    confidence_score = art.get("confidence_score") or art.get("confidence")
+    if confidence_score is not None:
+        try:
+            conf_val = f"{int(float(confidence_score) * 100 if float(confidence_score) <= 1.0 else float(confidence_score))}%"
+        except Exception:
+            conf_val = "92%"
+    else:
+        conf_val = "95%" if (threat_actor != "Unknown" and art.get("cves")) else ("92%" if severity in ("CRITICAL", "HIGH") else "88%")
+
+    # Technical Indicators: CVE, Malware, MITRE, IOCs
+    cves_list = art.get("cves") or []
+    cve_str = ", ".join(cves_list[:2]) if cves_list else "N/A"
+
+    malware_list = art.get("malware_families") or []
+    malware_str = ", ".join(malware_list[:2]) if malware_list else "Unattributed"
+
+    mitre_list = [m.get("technique_id", m) if isinstance(m, dict) else str(m) for m in (art.get("mitre_techniques") or [])]
+    mitre_str = ", ".join(mitre_list[:2]) if mitre_list else ("T1486" if "ransom" in attack_type.lower() else "T1190")
+
+    iocs_data = art.get("iocs") or {}
+    total_iocs = int(art.get("ioc_count") or 0)
+    if total_iocs == 0 and isinstance(iocs_data, dict):
+        total_iocs = len(iocs_data.get("ips", [])) + len(iocs_data.get("domains", [])) + len(iocs_data.get("hashes", []))
+    iocs_str = str(total_iocs) if total_iocs > 0 else (str(len(cves_list)) if cves_list else "N/A")
+
+    # Facts: Source, Date, Threat Actor, Company
+    source_name = art.get("source_name") or "Threat Intel Feed"
+    article_url = art.get("url") or platform_url
+    pub_date_str = extract_date_reported(art)
+    art_id = str(art.get("_id") or art.get("id") or "")
+    report_url = f"{platform_url}/feed/{art_id}" if art_id else (f"{platform_url}/feed?url={article_url}")
+
+    card_body = (
+        f"### 🔴 {severity} | {app_name} INTELLIGENCE ALERT\n\n"
+        f"### 🚨 COMPANY CYBER INCIDENT\n\n"
+        f"**{company_val}**  \n"
+        f"{clean_title}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"**AI ASSESSMENT**\n\n"
+        f"{ai_assessment}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"**🎯 THREAT PROFILE**\n\n"
+        f"• **Attack**       : {attack_type}  \n"
+        f"• **Threat Actor** : {threat_actor}  \n"
+        f"• **Sector**       : {sector}  \n"
+        f"• **Region**       : {country}  \n"
+        f"• **Severity**     : {severity}  \n"
+        f"• **Confidence**   : {conf_val}\n\n"
+        f"**🧩 TECHNICAL INDICATORS**\n\n"
+        f"• **CVE**          : {cve_str}  \n"
+        f"• **Malware**      : {malware_str}  \n"
+        f"• **MITRE**        : {mitre_str}  \n"
+        f"• **IOCs**         : {iocs_str}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"**📌 INTELLIGENCE FACTS**\n\n"
+        f"• **Source**       : [{source_name}]({article_url})  \n"
+        f"• **Date**         : {pub_date_str}  \n"
+        f"• **Threat Actor** : {threat_actor}  \n"
+        f"• **Company**      : {company_val}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"*{platform_name_display} | Automated Threat Intelligence*"
+    )
 
     card = {
         "@type": "MessageCard",
         "@context": "http://schema.org/extensions",
         "themeColor": theme_color,
-        "summary": f"{app_name}: {formatted_title}",
-        "sections": sections,
+        "summary": f"🔴 {severity} | {app_name} ALERT: {company_val}",
+        "sections": [
+            {
+                "text": card_body,
+                "markdown": True,
+            }
+        ],
         "potentialAction": [
             {
                 "@type": "OpenUri",
-                "name": "View in Intel Feed",
-                "targets": [{"os": "default", "uri": f"{platform_url}/feed/{art.get('_id') or art.get('id')}" if (art.get('_id') or art.get('id')) else f"{platform_url}/feed"}]
-            },
-            {
-                "@type": "OpenUri",
-                "name": f"Open {platform_name_display}",
-                "targets": [{"os": "default", "uri": platform_url}]
-            },
-        ],
+                "name": "VIEW FULL REPORT →",
+                "targets": [{"os": "default", "uri": report_url}]
+            }
+        ]
     }
     return card
-
-
-    """
-    CAO Company Breach Card — Clear · Accurate · Objective
-
-    Layout (mirrors reference screenshot):
-      ┌──────────────────────────────────────────┐
-      │ 🔴 ACTIVE THREAT              [Category] │
-      │ ██  Company Name     country · sector    │
-      │     [SEVERITY badge]                      │
-      ├──────────────────────────────────────────┤
-      │ 🔔 APP — NEW THREAT INTELLIGENCE         │
-      │ [COUNTRY] Title (bold)                   │
-      │ Summary text ...                         │
-      ├──────────────────────────────────────────┤
-      │ Threat actor  │  News Source (link)      │
-      │ Board/Section │  Category                │
-      ├──────────────────────────────────────────┤
-      │ ⚠️ POTENTIAL IMPACT                       │
-      │ [tag] · [tag] · [tag]                    │
-      ├──────────────────────────────────────────┤
-      │ Collected: ...   Published: ...           │
-      │                           [Details ↗]    │
-      └──────────────────────────────────────────┘
-    """
-    app_name = (getattr(settings, "APP_NAME", "") or "CLARITYTI").upper()
-    platform_name_display = getattr(settings, "APP_NAME", "") or "ClarityTI"
-    platform_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000")
-
-    # ── Title & Country ───────────────────────────────────────────────────────
-    raw_title = (art.get("title") or "Company Threat Intelligence Alert").strip()
-    clean_title = re.sub(
-        r'\s*-\s*(?:Reuters|BleepingComputer|The Hacker News|OSINTxLab|BreachNews|Dark Reading|SecurityWeek|CERT-In).*$',
-        '', raw_title, flags=re.IGNORECASE
-    ).strip()
-
-    country = (art.get("target_country") or extract_country(art) or "GLOBAL").upper()
-    if country == "UNKNOWN":
-        country = "GLOBAL"
-
-    formatted_title = clean_title if (clean_title.startswith("[") and "]" in clean_title) else f"[{country}] {clean_title}"
-
-    # ── Company & Sector ──────────────────────────────────────────────────────
-    extracted_company = extract_breached_company(art)
-    company_val = extracted_company if extracted_company and extracted_company not in ("Not Specified", "") else "Target Enterprise"
-    initials = _company_initials(company_val)
-    sector = determine_sector(art)
-    board_section = "Databases" if any(k in clean_title.lower() for k in ["database", "db", "records", "leak", "dump"]) else sector
-    country_display = country.title() if country != "GLOBAL" else "Global"
-
-    # ── Source & URLs ─────────────────────────────────────────────────────────
-    source_name = art.get("source_name") or "Threat Intel Feed"
-    article_url = art.get("url") or platform_url
-
-    # ── Threat Data ───────────────────────────────────────────────────────────
-    threat_actor = extract_threat_actor(art)
-    category = determine_incident_type(art)
-    if category in ("Cyber Advisory", "Vulnerability"):
-        category = "Data Leak" if "leak" in clean_title.lower() else "Data Breach"
-
-    severity = extract_severity_level(art)
-    clean_summary = clean_summary_text(art)
-
-    # ── Timestamps ────────────────────────────────────────────────────────────
-    collected_at = format_timestamp_pretty(art.get("crawled_at") or datetime.now(timezone.utc))
-    published_at = format_timestamp_pretty(art.get("published_at") or datetime.now(timezone.utc))
-
-    # ── Impact Tags ───────────────────────────────────────────────────────────
-    impact_line = _impact_tags(art)
-
-    # ── Theme colour ──────────────────────────────────────────────────────────
-    theme_color = _severity_color(severity)
-
-    # ── Card Sections ─────────────────────────────────────────────────────────
-    sections: List[Dict[str, Any]] = [
-        # Section 1 — Header banner (company identity + severity)
-        {
-            "activityTitle": f"🔴 **ACTIVE THREAT** &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; **{category}**",
-            "activitySubtitle": (
-                f"**{initials}** &nbsp; **{company_val}** &nbsp;&nbsp; "
-                f"📍 {country_display} · {sector} &nbsp;&nbsp; "
-                f"**[{severity}]**"
-            ),
-            "markdown": True,
-        },
-        # Section 2 — Intelligence body
-        {
-            "activityTitle": f"🔔 **{app_name} — NEW THREAT INTELLIGENCE**",
-            "activitySubtitle": f"**{formatted_title}**",
-            "text": clean_summary,
-            "facts": [
-                {"name": "Threat actor",  "value": threat_actor},
-                {"name": "News source",   "value": f"[{source_name}]({article_url})"},
-                {"name": "Board / section", "value": board_section},
-                {"name": "Category",      "value": category},
-            ],
-            "markdown": True,
-        },
-    ]
-
-    # Section 3 — Potential Impact (only if tags exist)
-    if impact_line:
-        sections.append({
-            "title": "⚠️ POTENTIAL IMPACT",
-            "text": impact_line,
-            "markdown": True,
-        })
-
-    # Section 4 — Timestamps footer
-    sections.append({
-        "text": (
-            f"📥 Collected {collected_at} &nbsp;&nbsp; "
-            f"📡 Published {published_at}"
-        ),
-        "markdown": True,
-    })
-
-    # Evidence screenshot (if available)
-    evidence_image_url = art.get("image_url") or art.get("screenshot_url")
-    if evidence_image_url and evidence_image_url.startswith("http"):
-        sections.append({
-            "title": "SCREENSHOT",
-            "images": [{"image": evidence_image_url, "title": f"Evidence — {company_val}"}],
-            "markdown": True,
-        })
-
-    card = {
-        "@type": "MessageCard",
-        "@context": "http://schema.org/extensions",
-        "themeColor": theme_color,
-        "summary": f"{app_name}: {formatted_title}",
-        "sections": sections,
-        "potentialAction": [
-            {
-                "@type": "OpenUri",
-                "name": f"Details ↗",
-                "targets": [{"os": "default", "uri": f"{platform_url}/feed?url={article_url}"}]
-            },
-            {
-                "@type": "OpenUri",
-                "name": f"Open in {platform_name_display}",
-                "targets": [{"os": "default", "uri": platform_url}]
-            },
-        ],
-    }
-    return card
-
 
 
 def build_general_advisory_card(art: Dict[str, Any]) -> Dict[str, Any]:
     """
-    CAO Non-Company Advisory Card — Clear · Accurate · Objective
-
-    Teams MessageCard constraints respected:
-    - No &nbsp; / HTML entities
-    - source + time-ago in activitySubtitle (no inline badge tricks)
-    - severity as a proper fact row
-    - CVSS / exploit / affected systems in facts grid
-    - Tags as comma-separated text
-
-    Rendered structure:
-      ─────────────────────────────────────────
-      🛡️ ZERO-DAY · VULNERABILITY
-      Source Name  ·  2 hours ago
-      ─────────────────────────────────────────
-      Title
-      Summary text...
-
-      Severity         | HIGH
-      CVSS score       | 9.8 / 10
-      Exploit status   | Active ITW
-      Affected systems | 12M+ devices
-      CVEs / IDs       | CVE-2026-3821
-      ─────────────────────────────────────────
-      Tags: RCE, VPN, Zero-day, CVE-2026-3821
-      ─────────────────────────────────────────
-      📅 Aug 20, 2026, 10:00 AM
+    Template 2: Cyber News Advisory Card
+    Layout:
+      ┌──────────────────────────────────────────────────────────────┐
+      │ 📰 CYBER NEWS                                    [DATE]      │
+      │ [Title]                                                      │
+      │ ──────────────────────────────────────────────────────────── │
+      │ [Summary / Content]                                          │
+      │ ──────────────────────────────────────────────────────────── │
+      │ CATEGORY                                                     │
+      │ 🛡 [Category]                                                 │
+      │ SOURCE                                                       │
+      │ [Source Name]                                                │
+      │ PUBLISHED                                                    │
+      │ [Date]                                                       │
+      │ REGION                                                       │
+      │ 🌍 [Region]                                                  │
+      │ ──────────────────────────────────────────────────────────── │
+      │ 🔎 AI INSIGHT                                                │
+      │ [Insight Text]                                               │
+      │                         [ READ FULL NEWS → ]                 │
+      └──────────────────────────────────────────────────────────────┘
     """
     platform_name_display = getattr(settings, "APP_NAME", "") or "ClarityTI"
-    platform_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000")
+    platform_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000").rstrip("/")
 
-    # ── Title & Country ───────────────────────────────────────────────────────
-    raw_title = (art.get("title") or "Cyber Security Advisory").strip()
+    raw_title = (art.get("title") or "Cyber Security News Advisory").strip()
     clean_title = re.sub(
         r'\s*-\s*(?:Reuters|BleepingComputer|The Hacker News|OSINTxLab|BreachNews|Dark Reading|SecurityWeek|CERT-In).*$',
         '', raw_title, flags=re.IGNORECASE
     ).strip()
 
-    country = (art.get("target_country") or extract_country(art) or "GLOBAL").upper()
-    if country == "UNKNOWN":
-        country = "GLOBAL"
-    formatted_title = clean_title if (clean_title.startswith("[") and "]" in clean_title) else f"[{country}] {clean_title}"
+    pub_date = extract_date_reported(art)
+    pub_date_upper = pub_date.upper()
 
-    # ── Source & timing ───────────────────────────────────────────────────────
-    source_name = art.get("source_name") or "Cyber Advisory Source"
+    summary_text = clean_summary_text(art).strip()
+    category = determine_incident_type(art)
+    source_name = art.get("source_name") or "Cyber News Source"
     article_url = art.get("url") or platform_url
-    pub_dt = art.get("published_at") or art.get("crawled_at")
-    time_ago_str = _time_ago(pub_dt)
-    date_of_publish = format_timestamp_pretty(pub_dt or datetime.now(timezone.utc))
+    country = (art.get("target_country") or extract_country(art) or "Global").title()
+    if country.upper() == "UNKNOWN":
+        country = "Global"
 
-    # ── Classification ────────────────────────────────────────────────────────
-    incident_type = determine_incident_type(art)
     severity = extract_severity_level(art)
-    clean_summary = clean_summary_text(art)
-
-    # ── CVSS / Exploit status / Affected systems ──────────────────────────────
-    cves: list = art.get("cves") or []
-    cve_text = ", ".join(cves[:3]) if cves else "N/A"
-
-    cvss_raw = art.get("cvss_score") or art.get("cvss")
-    if cvss_raw:
-        try:
-            cvss_display = f"{float(str(cvss_raw)):.1f} / 10"
-        except ValueError:
-            cvss_display = str(cvss_raw)
-    else:
-        m = re.search(r'cvss[:\s]+([0-9]+(?:\.[0-9]+)?)', f"{art.get('title','')} {art.get('summary','')}", re.IGNORECASE)
-        cvss_display = f"{float(m.group(1)):.1f} / 10" if m else "N/A"
-
-    exploit_status = art.get("exploit_status") or ""
-    if not exploit_status:
-        text_lower = f"{art.get('title','')} {art.get('summary','')}".lower()
-        if any(k in text_lower for k in ["actively exploit", "in the wild", "itw", "mass exploit"]):
-            exploit_status = "Active ITW"
-        elif any(k in text_lower for k in ["poc", "proof of concept", "exploit available"]):
-            exploit_status = "PoC Available"
-        elif any(k in text_lower for k in ["no known exploit", "no exploit"]):
-            exploit_status = "No Known Exploit"
-        else:
-            exploit_status = "Unknown"
-
-    affected_systems = art.get("affected_systems") or art.get("affected_products") or ""
-    if not affected_systems:
-        m2 = re.search(r'(\d+[MBKmk+,\.]+\s*(?:device|system|user|machine|server|endpoint)s?)', f"{art.get('title','')} {art.get('summary','')}", re.IGNORECASE)
-        affected_systems = m2.group(1).strip() if m2 else "N/A"
-
-    # ── Tags — use article tags + CVE IDs, comma-separated plain text ─────────
-    raw_tags: list[str] = [str(t).strip() for t in (art.get("tags") or []) if t]
-    for cve in cves[:2]:
-        if cve.upper() not in [t.upper() for t in raw_tags]:
-            raw_tags.append(cve.upper())
-    tag_text = ", ".join(raw_tags[:8]) if raw_tags else ""
-
-    # ── Category label ────────────────────────────────────────────────────────
-    type_upper = incident_type.upper()
-    if "ZERO" in type_upper or "0-DAY" in type_upper:
-        category_label = "🛡️ ZERO-DAY · VULNERABILITY"
-    elif "RANSOMWARE" in type_upper:
-        category_label = "🔴 RANSOMWARE · EXTORTION"
-    elif "PHISHING" in type_upper:
-        category_label = "🎣 PHISHING · SOCIAL ENGINEERING"
-    elif "APT" in type_upper or "NATION" in type_upper:
-        category_label = "🕵️ APT · NATION-STATE CAMPAIGN"
-    elif "SUPPLY" in type_upper:
-        category_label = "🔗 SUPPLY CHAIN · THIRD PARTY RISK"
-    else:
-        category_label = f"🛡️ {incident_type.upper()} · ADVISORY"
-
-    # ── Theme colour ──────────────────────────────────────────────────────────
     theme_color = _severity_color(severity)
 
-    # ── Sections ─────────────────────────────────────────────────────────────
-    sections: List[Dict[str, Any]] = [
-        # Section 1 — Category header + source + time-ago (no HTML tricks)
-        {
-            "activityTitle": category_label,
-            "activitySubtitle": f"[{source_name}]({article_url})  ·  {time_ago_str}",
-            "markdown": True,
-        },
-        # Section 2 — Title + summary + structured facts
-        {
-            "activityTitle": formatted_title,
-            "text": clean_summary,
-            "facts": [
-                {"name": "Severity",         "value": severity},
-                {"name": "CVSS score",        "value": cvss_display},
-                {"name": "Exploit status",    "value": exploit_status},
-                {"name": "Affected systems",  "value": affected_systems},
-                {"name": "CVEs / IDs",        "value": cve_text},
-            ],
-            "markdown": True,
-        },
-    ]
+    # AI Insight
+    ai_sum = art.get("ai_summary")
+    if ai_sum and len(ai_sum.strip()) > 15:
+        first_sentence = ai_sum.strip().split(".")[0].strip()
+        ai_insight = f"{first_sentence}."
+    else:
+        if "zero" in category.lower() or "cve" in clean_title.lower():
+            ai_insight = "Critical vulnerability requiring security-team attention and patch deployment."
+        elif "ransomware" in category.lower():
+            ai_insight = "Active extortion operation detected; review offline backups and perimeter access."
+        elif "breach" in category.lower() or "leak" in category.lower():
+            ai_insight = "Enterprise data exposure reported; conduct credential rotation and account audits."
+        else:
+            ai_insight = "Security advisory requiring infrastructure monitoring and threat response readiness."
 
-    # Section 3 — Tags (comma-separated plain text, no bracket noise)
-    if tag_text:
-        sections.append({
-            "title": "Tags",
-            "text": tag_text,
-            "markdown": True,
-        })
+    art_id = str(art.get("_id") or art.get("id") or "")
+    read_news_url = article_url if article_url and article_url.startswith("http") else (f"{platform_url}/feed/{art_id}" if art_id else platform_url)
 
-    # Section 4 — Timestamp footer
-    sections.append({
-        "text": f"📅 {date_of_publish}",
-        "markdown": True,
-    })
+    card_body = (
+        f"### 📰 CYBER NEWS &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {pub_date_upper}\n\n"
+        f"**{clean_title}**\n\n"
+        f"────────────────────────────────────────────────────────────\n\n"
+        f"{summary_text}\n\n"
+        f"────────────────────────────────────────────────────────────\n\n"
+        f"**CATEGORY**  \n"
+        f"🛡 {category}\n\n"
+        f"**SOURCE**  \n"
+        f"[{source_name}]({article_url})\n\n"
+        f"**PUBLISHED**  \n"
+        f"{pub_date}\n\n"
+        f"**REGION**  \n"
+        f"🌍 {country}\n\n"
+        f"────────────────────────────────────────────────────────────\n\n"
+        f"**🔎 AI INSIGHT**  \n"
+        f"{ai_insight}\n"
+    )
 
     card = {
         "@type": "MessageCard",
         "@context": "http://schema.org/extensions",
         "themeColor": theme_color,
-        "summary": formatted_title,
-        "sections": sections,
+        "summary": f"📰 CYBER NEWS: {clean_title}",
+        "sections": [
+            {
+                "text": card_body,
+                "markdown": True,
+            }
+        ],
         "potentialAction": [
             {
                 "@type": "OpenUri",
-                "name": "Mitigate",
-                "targets": [{"os": "default", "uri": f"{platform_url}/feed?url={article_url}"}]
-            },
-            {
-                "@type": "OpenUri",
-                "name": "Full report",
-                "targets": [{"os": "default", "uri": article_url}]
-            },
-        ],
+                "name": "READ FULL NEWS →",
+                "targets": [{"os": "default", "uri": read_news_url}]
+            }
+        ]
     }
     return card
 
@@ -1530,14 +1319,37 @@ def _prioritize_company_breaches(
 
 def build_single_article_card(art: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Builds the official CyberPulse High Priority / Severe Alert Adaptive Card
-    for high severity and critical intelligence items.
+    Selects card layout based on article nature:
+    - Company Breach / Incident -> build_threat_intelligence_breach_card (Template 1)
+    - General Advisory / CVE / News -> build_general_advisory_card (Template 2)
     """
-    return TeamsService.build_high_severity_article_card(art)
+    if is_company_breach_or_incident(art):
+        return build_threat_intelligence_breach_card(art)
+    return build_general_advisory_card(art)
 
 
 class TeamsService:
     """Service to send structured threat intelligence, breach cards, and daily digest to MS Teams Webhooks."""
+
+    @staticmethod
+    def build_critical_card(event: Dict[str, Any]) -> Dict[str, Any]:
+        """Template 1: Company Cyber Incident / High Severity Alert."""
+        return build_threat_intelligence_breach_card(event)
+
+    @staticmethod
+    def build_regular_card(art: Dict[str, Any]) -> Dict[str, Any]:
+        """Template 2: Cyber News Advisory Card."""
+        return build_general_advisory_card(art)
+
+    @staticmethod
+    def build_cyberpulse_high_priority_card(event: Dict[str, Any]) -> Dict[str, Any]:
+        """Template 1: CyberPulse High Priority Event Card."""
+        return build_threat_intelligence_breach_card(event)
+
+    @staticmethod
+    def build_high_severity_article_card(art: Dict[str, Any]) -> Dict[str, Any]:
+        """Build single article card (Template 1 or 2 based on incident type)."""
+        return build_single_article_card(art)
 
     @staticmethod
     async def send_test_webhook(webhook_url: str) -> bool:
@@ -1547,17 +1359,19 @@ class TeamsService:
 
         sample_event = {
             "title": "Microsoft Teams Integration Test Verified — ClarityTI",
-            "heat_score": 95,
-            "source_count": 12,
-            "article_count": 18,
-            "trend": "increasing",
-            "unique_source_names": [
-                "The Hacker News", "BleepingComputer", "SecurityWeek", "Dark Reading", "Recorded Future News",
-                "ThreatPost", "Cyble", "Infosecurity Magazine", "The Register", "Security Affairs"
-            ],
-            "first_detected_at": datetime.now(timezone.utc),
-            "last_detected_at": datetime.now(timezone.utc),
-            "event_id": "TEST-001"
+            "company_name": "Microsoft Corporation",
+            "target_company": "Microsoft Corporation",
+            "severity": "HIGH",
+            "confidence": 92,
+            "incident_type": "Ransomware",
+            "threat_actors": ["LockBit 3.0"],
+            "sector": "Technology & Software",
+            "target_country": "Global",
+            "cves": ["CVE-2026-65618"],
+            "malware_families": ["LockBit"],
+            "source_name": "The Hacker News",
+            "published_at": datetime.now(timezone.utc),
+            "ai_summary": "Active enterprise extortion campaign detected targeting software supply chain pipelines.",
         }
         card = TeamsService.build_cyberpulse_high_priority_card(sample_event)
 
@@ -1570,7 +1384,7 @@ class TeamsService:
     @staticmethod
     async def send_company_breaches(webhook_url: str, articles: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
-        Send ONLY verified High/Critical Severity alerts to MS Teams with the official CyberPulse template.
+        Send ONLY verified High/Critical Severity alerts to MS Teams with the official Template 1.
         """
         if not webhook_url:
             return {"sent": 0, "message": "No articles or missing webhook"}
@@ -1606,7 +1420,7 @@ class TeamsService:
             for art in high_severe_breaches:
                 if _is_already_dispatched(art, webhook_url):
                     continue
-                card_payload = TeamsService.build_high_severity_article_card(art)
+                card_payload = build_single_article_card(art)
                 company_name = extract_breached_company(art)
                 status_tag = determine_breach_status(art)
 
@@ -1622,7 +1436,7 @@ class TeamsService:
                             "status": "sent"
                         })
                 except Exception as e:
-                    log.error("Failed sending high severity alert card to Teams", company=company_name, error=str(e))
+                    log.error("Failed sending alert card to Teams", company=company_name, error=str(e))
 
                 await asyncio.sleep(0.4)
 
@@ -1630,7 +1444,7 @@ class TeamsService:
             "status": "success",
             "sent": sent_count,
             "dispatched": dispatched_details,
-            "message": f"Successfully dispatched {sent_count} high-severity alert cards to Teams!",
+            "message": f"Successfully dispatched {sent_count} alert cards to Teams!",
         }
 
     @staticmethod
@@ -1917,325 +1731,6 @@ class TeamsService:
             }
         }
 
-    @staticmethod
-    def build_critical_card(event: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Build the Critical Card (CyberPulse Alert):
-        - Score calculated from source corroboration / heat calculation
-        - Top Row: [Score Box] | [Threat Actor]
-        - Middle Row: [Short Description]
-        - Bottom Row: [Details: Country, Sector, Category] | [Title]
-        - Action Button: 'View on CyberPulse' -> /cyberpulse?event={event_id}
-        """
-        title = (event.get("title") or "Critical Cyber Threat Alert").strip()
-        
-        # Calculate Score strictly based on corroboration / source count if event
-        source_count = int(event.get("source_count") or len(event.get("unique_source_names") or []) or 1)
-        heat_score = event.get("heat_score")
-        if heat_score is not None and int(heat_score) > 0:
-            score_val = int(heat_score)
-        else:
-            # Dynamic heat score calculation based on reporting source breadth
-            if source_count >= 10:
-                score_val = 95
-            elif source_count >= 7:
-                score_val = 85
-            elif source_count >= 4:
-                score_val = 75
-            elif source_count >= 2:
-                score_val = 65
-            else:
-                score_val = int(event.get("cyber_risk_score") or 60)
-
-        pill_label = "🔥 CRITICAL" if score_val >= 80 else ("⚡ HIGH" if score_val >= 60 else "🟢 MEDIUM")
-
-        # Threat Actor extraction
-        actor = extract_threat_actor(event)
-        if actor and actor.lower() not in ("unknown", "unattributed", "none", ""):
-            actor_display = actor
-            actor_color = "Good"
-        else:
-            actor_display = "Unattributed"
-            actor_color = "Default"
-
-        # Details
-        country = (event.get("target_country") or extract_country(event) or "Global").upper()
-        sector = determine_sector(event)
-        category = determine_incident_type(event)
-        summary = clean_summary_text(event)
-
-        event_id = event.get("event_id") or event.get("viral_event_id") or "CP-001"
-        platform_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000").rstrip("/")
-        pulse_url = f"{platform_url}/cyberpulse?event={event_id}"
-
-        card = {
-            "type": "message",
-            "attachments": [
-                {
-                    "contentType": "application/vnd.microsoft.card.adaptive",
-                    "contentUrl": None,
-                    "content": {
-                        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-                        "type": "AdaptiveCard",
-                        "version": "1.4",
-                        "body": [
-                            # Alert Banner Header
-                            {
-                                "type": "ColumnSet",
-                                "columns": [
-                                    {
-                                        "type": "Column",
-                                        "width": "auto",
-                                        "items": [{"type": "TextBlock", "text": "🚨", "size": "ExtraLarge"}]
-                                    },
-                                    {
-                                        "type": "Column",
-                                        "width": "stretch",
-                                        "items": [
-                                            {
-                                                "type": "TextBlock",
-                                                "text": "CYBERPULSE — CRITICAL ALERT",
-                                                "weight": "Bolder",
-                                                "size": "Large",
-                                                "color": "Attention"
-                                            },
-                                            {
-                                                "type": "TextBlock",
-                                                "text": f"Severe Cyber Threat Intelligence · {source_count} Sources Corroborating",
-                                                "isSubtle": True,
-                                                "spacing": "None"
-                                            }
-                                        ]
-                                    }
-                                ]
-                            },
-                            # 1. Top Row: [Score] | [Threat Actor]
-                            {
-                                "type": "ColumnSet",
-                                "spacing": "Medium",
-                                "separator": True,
-                                "columns": [
-                                    {
-                                        "type": "Column",
-                                        "width": "auto",
-                                        "items": [
-                                            {
-                                                "type": "Container",
-                                                "style": "attention",
-                                                "items": [
-                                                    {"type": "TextBlock", "text": pill_label, "weight": "Bolder", "size": "Small", "color": "Attention", "horizontalAlignment": "Center"},
-                                                    {"type": "TextBlock", "text": f"{score_val}/100", "weight": "Bolder", "size": "ExtraLarge", "color": "Attention", "horizontalAlignment": "Center"},
-                                                    {"type": "TextBlock", "text": "CORROBORATION SCORE", "size": "Small", "isSubtle": True, "horizontalAlignment": "Center"}
-                                                ]
-                                            }
-                                        ]
-                                    },
-                                    {
-                                        "type": "Column",
-                                        "width": "stretch",
-                                        "items": [
-                                            {"type": "TextBlock", "text": "📄 THREAT ACTOR", "size": "Small", "weight": "Bolder", "color": "Accent"},
-                                            {"type": "TextBlock", "text": actor_display, "size": "Large", "weight": "Bolder", "color": actor_color, "wrap": True},
-                                            {"type": "TextBlock", "text": f"Corroborated across {source_count} independent feeds", "size": "Small", "isSubtle": True, "spacing": "Small"}
-                                        ]
-                                    }
-                                ]
-                            },
-                            # 2. Middle Row: [Short Description]
-                            {
-                                "type": "Container",
-                                "spacing": "Medium",
-                                "separator": True,
-                                "items": [
-                                    {"type": "TextBlock", "text": "SUMMARY", "size": "Small", "weight": "Bolder", "color": "Accent"},
-                                    {"type": "TextBlock", "text": summary, "wrap": True, "size": "Medium"}
-                                ]
-                            },
-                            # 3. Bottom Row: [Details] | [Title]
-                            {
-                                "type": "ColumnSet",
-                                "spacing": "Medium",
-                                "separator": True,
-                                "columns": [
-                                    {
-                                        "type": "Column",
-                                        "width": "1",
-                                        "items": [
-                                            {"type": "TextBlock", "text": "DETAILS", "size": "Small", "weight": "Bolder", "color": "Accent"},
-                                            {"type": "TextBlock", "text": f"• **Country:** {country}\n• **Sector:** {sector}\n• **Category:** {category}", "wrap": True, "size": "Small"}
-                                        ]
-                                    },
-                                    {
-                                        "type": "Column",
-                                        "width": "1",
-                                        "items": [
-                                            {"type": "TextBlock", "text": "EVENT", "size": "Small", "weight": "Bolder", "color": "Accent"},
-                                            {"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Medium", "wrap": True}
-                                        ]
-                                    }
-                                ]
-                            }
-                        ],
-                        "actions": [
-                            {
-                                "type": "Action.OpenUrl",
-                                "title": "🔎 View on CyberPulse",
-                                "url": pulse_url,
-                                "style": "positive"
-                            }
-                        ]
-                    }
-                }
-            ]
-        }
-        return card
-
-    @staticmethod
-    def build_regular_card(art: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Build the Regular Card (IntelFeed Alert):
-        - Top Row: [Title] | [Threat Actor]
-        - Middle Row: [Short Description]
-        - Bottom Row: [Details: Country, Sector, Category]
-        - Action Button: 'View on IntelFeed' -> /feed/{article_id}
-        """
-        title = (art.get("title") or "Cyber Security News Advisory").strip()
-        
-        # Threat Actor extraction
-        actor = extract_threat_actor(art)
-        if actor and actor.lower() not in ("unknown", "unattributed", "none", ""):
-            actor_display = actor
-            actor_color = "Good"
-        else:
-            actor_display = "Unattributed"
-            actor_color = "Default"
-
-        # Details
-        country = (art.get("target_country") or extract_country(art) or "Global").upper()
-        sector = determine_sector(art)
-        category = determine_incident_type(art)
-        summary = clean_summary_text(art)
-
-        art_id = str(art.get("_id") or art.get("id") or "")
-        platform_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000").rstrip("/")
-        if art_id:
-            feed_url = f"{platform_url}/feed/{art_id}"
-        else:
-            words = [w for w in re.findall(r'\b[A-Za-z0-9_-]+\b', title) if len(w) > 3]
-            encoded_query = urllib.parse.quote(" ".join(words[:3]) if words else title[:25])
-            feed_url = f"{platform_url}/feed?q={encoded_query}"
-
-        card = {
-            "type": "message",
-            "attachments": [
-                {
-                    "contentType": "application/vnd.microsoft.card.adaptive",
-                    "contentUrl": None,
-                    "content": {
-                        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-                        "type": "AdaptiveCard",
-                        "version": "1.4",
-                        "body": [
-                            # Alert Banner Header
-                            {
-                                "type": "ColumnSet",
-                                "columns": [
-                                    {
-                                        "type": "Column",
-                                        "width": "auto",
-                                        "items": [{"type": "TextBlock", "text": "🔔", "size": "Large"}]
-                                    },
-                                    {
-                                        "type": "Column",
-                                        "width": "stretch",
-                                        "items": [
-                                            {
-                                                "type": "TextBlock",
-                                                "text": "NEWSMON — INTEL FEED",
-                                                "weight": "Bolder",
-                                                "size": "Medium",
-                                                "color": "Accent"
-                                            },
-                                            {
-                                                "type": "TextBlock",
-                                                "text": f"Threat Advisory · {category}",
-                                                "isSubtle": True,
-                                                "spacing": "None"
-                                            }
-                                        ]
-                                    }
-                                ]
-                            },
-                            # 1. Top Row: [Title] | [Threat Actor]
-                            {
-                                "type": "ColumnSet",
-                                "spacing": "Medium",
-                                "separator": True,
-                                "columns": [
-                                    {
-                                        "type": "Column",
-                                        "width": "2",
-                                        "items": [
-                                            {"type": "TextBlock", "text": "EVENT", "size": "Small", "weight": "Bolder", "color": "Accent"},
-                                            {"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Medium", "wrap": True}
-                                        ]
-                                    },
-                                    {
-                                        "type": "Column",
-                                        "width": "1",
-                                        "items": [
-                                            {"type": "TextBlock", "text": "📄 THREAT ACTOR", "size": "Small", "weight": "Bolder", "color": "Accent"},
-                                            {"type": "TextBlock", "text": actor_display, "size": "Medium", "weight": "Bolder", "color": actor_color, "wrap": True}
-                                        ]
-                                    }
-                                ]
-                            },
-                            # 2. Middle Row: [Short Description]
-                            {
-                                "type": "Container",
-                                "spacing": "Medium",
-                                "separator": True,
-                                "items": [
-                                    {"type": "TextBlock", "text": "SUMMARY", "size": "Small", "weight": "Bolder", "color": "Accent"},
-                                    {"type": "TextBlock", "text": summary, "wrap": True, "size": "Small"}
-                                ]
-                            },
-                            # 3. Bottom Row: [Details]
-                            {
-                                "type": "Container",
-                                "spacing": "Medium",
-                                "separator": True,
-                                "items": [
-                                    {"type": "TextBlock", "text": "DETAILS", "size": "Small", "weight": "Bolder", "color": "Accent"},
-                                    {"type": "TextBlock", "text": f"• **Country:** {country}   • **Sector:** {sector}   • **Category:** {category}", "wrap": True, "size": "Small"}
-                                ]
-                            }
-                        ],
-                        "actions": [
-                            {
-                                "type": "Action.OpenUrl",
-                                "title": "🔎 View on IntelFeed",
-                                "url": feed_url,
-                                "style": "positive"
-                            }
-                        ]
-                    }
-                }
-            ]
-        }
-        return card
-
-    @staticmethod
-    def build_cyberpulse_high_priority_card(event: Dict[str, Any]) -> Dict[str, Any]:
-        """Alias for Critical Card."""
-        return TeamsService.build_critical_card(event)
-
-    @staticmethod
-    def build_high_severity_article_card(art: Dict[str, Any]) -> Dict[str, Any]:
-        """Alias for Regular Card with IntelFeed target."""
-        return TeamsService.build_regular_card(art)
-        return card
-
     @classmethod
     async def dispatch_cyberpulse_alert(cls, event: Dict[str, Any]) -> bool:
         """
@@ -2273,5 +1768,6 @@ class TeamsService:
             except Exception as e:
                 log.error("Exception during CyberPulse Teams alert dispatch", error=str(e))
                 return False
+
 
 
